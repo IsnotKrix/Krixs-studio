@@ -1,0 +1,15 @@
+{
+  "name": "void-interface",
+  "version": "2.0.0",
+  "description": "Void Interface — single-file Cloudflare Worker with Clerk + KV",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

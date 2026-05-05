@@ -1,0 +1,15 @@
+name = "void-interface"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+CLERK_PUBLISHABLE_KEY = "pk_test_REPLACE_WITH_YOUR_CLERK_PUBLISHABLE_KEY"
+APP_URL = "https://void-interface.workers.dev"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_KV_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+
+# Add secret with: wrangler secret put CLERK_SECRET_KEY
