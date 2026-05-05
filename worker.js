@@ -57,7 +57,7 @@ function clerkIssuer(pk) {
     const enc = parts[2];
     const decoded = b64urlDecode(enc);
     // strip trailing "$"
-    return "https://" + decoded.replace(/\$$/, "");
+    return "https://" + decoded.replace(/[$]/g, "");
   } catch {
     return null;
   }
@@ -1654,7 +1654,7 @@ async function loadClerk(){
   return new Promise((resolve)=>{
     let frontend;
     try{ 
-      frontend = atob(pk.split("_")[2].replace(/-/g,"+").replace(/_/g,"/")).replace(/$$/,""); 
+      frontend = atob(pk.split("_")[2].replace(/-/g,"+").replace(/_/g,"/")).replace(/[$]/g,""); 
       if (!frontend || !frontend.includes("clerk")) throw new Error("Invalid Clerk key format");
     }catch(e){ 
       console.warn("Invalid Clerk key:", e.message, "- proceeding without auth"); 
