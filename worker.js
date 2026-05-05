@@ -1962,24 +1962,34 @@ async function renderLanding(){
     // FAQ accordion
     $$(".faq-item").forEach(it=> { const q = it.querySelector(".faq-q"); if (q) q.onclick = ()=> it.classList.toggle("open"); });
 
-    // CTAs -> Clerk modal (zabezpieczone powiadomieniami na ekranie)
-    const open = ()=> { 
-      if (state.clerk && state.clerk.openSignUp) {
-        try { state.clerk.openSignUp({ afterSignUpUrl:"#/dashboard", afterSignInUrl:"#/dashboard" }); } 
-        catch(e) { toast("error", "Błąd otwierania logowania"); }
-      } else { toast("error", "Brak klucza CLERK_PUBLISHABLE_KEY! Dodaj go do pliku .dev.vars"); }
+    // Bezpieczna obsługa logowania/rejestracji za pomocą Hosted Pages
+    const handleAuth = (isSignUp = false) => {
+      if (!state.clerk) {
+        toast("error", "Logowanie niedostępne: sprawdź CLERK_PUBLISHABLE_KEY w konfiguracji.");
+        return;
+      }
+      
+      const dashUrl = window.location.href.split('#')[0] + "#/dashboard";
+      
+      try {
+        if (isSignUp) {
+          state.clerk.redirectToSignUp({ returnBackUrl: dashUrl });
+        } else {
+          state.clerk.redirectToSignIn({ returnBackUrl: dashUrl });
+        }
+      } catch (err) {
+        toast("error", "Wystąpił krytyczny błąd uruchamiania Clerka.");
+      }
     };
+
     const navSignin = document.getElementById("nav-signin");
-    if (navSignin) navSignin.onclick = ()=> { 
-      if (state.clerk && state.clerk.openSignIn) {
-        try { state.clerk.openSignIn({ afterSignInUrl:"#/dashboard" }); } 
-        catch(e) { toast("error", "Błąd otwierania logowania"); }
-      } else { toast("error", "Brak klucza CLERK_PUBLISHABLE_KEY! Dodaj go do pliku .dev.vars"); }
-    };
+    if (navSignin) navSignin.onclick = () => handleAuth(false);
+
     const navSignup = document.getElementById("nav-signup");
-    if (navSignup) navSignup.onclick = open;
+    if (navSignup) navSignup.onclick = () => handleAuth(true);
+
     const heroCta = document.getElementById("hero-cta-primary");
-    if (heroCta) heroCta.onclick = open;
+    if (heroCta) heroCta.onclick = () => handleAuth(true);
 
     // ripples + magnetic disabled for performance
     // $$(".btn").forEach(b=> b.addEventListener("click",(e)=>{ const r=b.getBoundingClientRect(); const sp=h("span",{class:"ripple"}); sp.style.left=(e.clientX-r.left)+"px"; sp.style.top=(e.clientY-r.top)+"px"; sp.style.width=sp.style.height="20px"; b.appendChild(sp); setTimeout(()=>sp.remove(),650); }));
@@ -3246,6 +3256,6 @@ const html = (s) =>
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "cache-control": "public, max-age=300", 
+      "cache-control": "no-cache, no-store, must-revalidate", 
     },
   });
