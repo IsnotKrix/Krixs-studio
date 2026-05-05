@@ -423,12 +423,12 @@ const HTML_HEAD = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#03030a" />
+<meta name="theme-color" content="#000409" />
 <title>Void Interface — Build · Ship · Scale</title>
 <meta name="description" content="Single-edge, zero-cold-start dashboard. Built on Cloudflare Workers, secured by Clerk." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500;600&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>__CSS__</style>
 </head>
 <body>__BODY__<script>
@@ -448,27 +448,35 @@ const HTML = HTML_HEAD;
 const CSS = `
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --void:#03030a;--void-2:#07070f;--void-3:#0d0d1a;
-  --surface:rgba(255,255,255,.025);--surface-hover:rgba(255,255,255,.05);
-  --border:rgba(255,255,255,.07);--border-bright:rgba(255,255,255,.15);
-  --text:#fff;--text-dim:rgba(255,255,255,.65);--text-faint:rgba(255,255,255,.4);
-  --cyan:#00f5ff;--cyan-dim:rgba(0,245,255,.15);--cyan-glow:rgba(0,245,255,.4);
-  --violet:#c800ff;--violet-dim:rgba(200,0,255,.15);--violet-glow:rgba(200,0,255,.4);
-  --pink:#ff0080;--green:#00ff88;--amber:#ffaa00;--red:#ff3366;
-  --grad-primary:linear-gradient(135deg,#00f5ff,#c800ff);
-  --grad-secondary:linear-gradient(135deg,#c800ff,#ff0080);
-  --grad-success:linear-gradient(135deg,#00ff88,#00f5ff);
-  --grad-danger:linear-gradient(135deg,#ff3366,#c800ff);
-  --grad-aurora:linear-gradient(135deg,#00f5ff 0%,#c800ff 50%,#ff0080 100%);
-  --font-display:'Syne',system-ui,sans-serif;
-  --font-body:'IBM Plex Mono',ui-monospace,monospace;
-  --font-ui:'DM Sans',system-ui,sans-serif;
-  --radius-sm:8px;--radius-md:14px;--radius-lg:20px;--radius-xl:28px;
+  /* Black foundation */
+  --void:#000409;--void-2:#04091a;--void-3:#080f24;--void-4:#0c1530;
+  --surface:rgba(255,255,255,.02);--surface-hover:rgba(255,255,255,.04);
+  --border:rgba(120,160,220,.08);--border-bright:rgba(120,160,220,.18);
+  --text:#f5f8ff;--text-dim:rgba(220,230,255,.62);--text-faint:rgba(180,200,235,.36);
+  /* Blue scale (single hue family) */
+  --blue:#2e7dff;--blue-bright:#4fa8ff;--blue-ice:#a8ccff;--blue-deep:#0048cc;--blue-darker:#001f5f;
+  --blue-dim:rgba(46,125,255,.14);--blue-glow:rgba(46,125,255,.32);
+  /* Aliases (kept for legacy class names) */
+  --cyan:var(--blue-bright);--cyan-dim:var(--blue-dim);--cyan-glow:var(--blue-glow);
+  --violet:var(--blue);--violet-dim:var(--blue-dim);--violet-glow:var(--blue-glow);
+  --pink:var(--blue-bright);
+  /* Status colors (semantic, kept minimal) */
+  --green:#36d399;--amber:#f5b942;--red:#ef4458;
+  /* Gradients */
+  --grad-primary:linear-gradient(135deg,#4fa8ff 0%,#2e7dff 50%,#0048cc 100%);
+  --grad-secondary:linear-gradient(135deg,#a8ccff,#2e7dff);
+  --grad-success:linear-gradient(135deg,#36d399,#4fa8ff);
+  --grad-danger:linear-gradient(135deg,#ef4458,#0048cc);
+  --grad-aurora:linear-gradient(135deg,#4fa8ff 0%,#2e7dff 60%,#001f5f 100%);
+  --font-display:'Space Grotesk',system-ui,sans-serif;
+  --font-body:'JetBrains Mono',ui-monospace,monospace;
+  --font-ui:'Manrope',system-ui,sans-serif;
+  --radius-sm:8px;--radius-md:12px;--radius-lg:16px;--radius-xl:24px;
   --ease-spring:cubic-bezier(.34,1.56,.64,1);
   --ease-smooth:cubic-bezier(.4,0,.2,1);
   --ease-out:cubic-bezier(0,0,.2,1);
-  --grid-opacity:.5;--particle-density:80;--aurora-intensity:.07;
-  --accent:var(--cyan);
+  --grid-opacity:.4;--particle-density:60;--aurora-intensity:.08;
+  --accent:var(--blue);
 }
 html,body{height:100%;background:var(--void);color:var(--text);font-family:var(--font-ui);font-size:14px;line-height:1.6;overflow-x:hidden;-webkit-font-smoothing:antialiased}
 body{position:relative;min-height:100vh}
@@ -488,10 +496,10 @@ input,select,textarea{font:inherit;color:inherit;background:transparent;border:0
   linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
   background-size:60px 60px;animation:grid-drift 20s linear infinite;opacity:var(--grid-opacity)}
 @keyframes grid-drift{from{background-position:0 0}to{background-position:60px 60px}}
-.aurora-blob{position:fixed;width:800px;height:800px;border-radius:50%;filter:blur(140px);opacity:var(--aurora-intensity);pointer-events:none;will-change:transform;mix-blend-mode:screen}
-.aurora-blob-1{background:var(--cyan);animation:blob-1 25s ease-in-out infinite}
-.aurora-blob-2{background:var(--violet);animation:blob-2 30s ease-in-out infinite}
-.aurora-blob-3{background:var(--pink);animation:blob-3 20s ease-in-out infinite}
+.aurora-blob{position:fixed;width:900px;height:900px;border-radius:50%;filter:blur(160px);opacity:var(--aurora-intensity);pointer-events:none;will-change:transform;mix-blend-mode:screen}
+.aurora-blob-1{background:var(--blue-bright);animation:blob-1 32s ease-in-out infinite}
+.aurora-blob-2{background:var(--blue-deep);animation:blob-2 38s ease-in-out infinite}
+.aurora-blob-3{background:var(--blue);animation:blob-3 26s ease-in-out infinite;opacity:calc(var(--aurora-intensity) * .7)}
 @keyframes blob-1{0%,100%{transform:translate(-200px,-200px) scale(1)}33%{transform:translate(100px,300px) scale(1.3)}66%{transform:translate(400px,-100px) scale(.8)}}
 @keyframes blob-2{0%,100%{transform:translate(60vw,20vh) scale(1.2)}50%{transform:translate(30vw,60vh) scale(.9)}}
 @keyframes blob-3{0%,100%{transform:translate(80vw,80vh) scale(1)}40%{transform:translate(10vw,40vh) scale(1.4)}}
@@ -530,11 +538,11 @@ body.cur-down .cursor-ring{transform:translate(-50%,-50%) scale(.75)}
 #progress{position:fixed;left:0;right:0;top:0;height:2px;background:var(--grad-primary);box-shadow:0 0 8px var(--cyan-glow);z-index:9999;transform:scaleX(0);transform-origin:left;transition:transform .3s var(--ease-out),opacity .3s}
 
 /* ---- typography ---- */
-.h1{font-family:var(--font-display);font-weight:800;font-size:clamp(48px,9vw,96px);letter-spacing:-.03em;line-height:.95}
-.h2{font-family:var(--font-display);font-weight:700;font-size:clamp(32px,5vw,56px);letter-spacing:-.02em;line-height:1.05}
-.h3{font-family:var(--font-display);font-weight:600;font-size:32px;letter-spacing:-.01em}
-.h4{font-family:var(--font-ui);font-weight:600;font-size:20px}
-.body{font-family:var(--font-body);font-size:14px;line-height:1.7}
+.h1{font-family:var(--font-display);font-weight:700;font-size:clamp(44px,7.5vw,88px);letter-spacing:-.035em;line-height:.96}
+.h2{font-family:var(--font-display);font-weight:600;font-size:clamp(30px,4.5vw,52px);letter-spacing:-.025em;line-height:1.05}
+.h3{font-family:var(--font-display);font-weight:600;font-size:28px;letter-spacing:-.015em}
+.h4{font-family:var(--font-ui);font-weight:600;font-size:18px;letter-spacing:-.005em}
+.body{font-family:var(--font-body);font-size:14px;line-height:1.65}
 .mono{font-family:var(--font-body)}
 .caption{font-family:var(--font-ui);font-weight:500;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint)}
 .gradient-text{background:var(--grad-primary);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -586,9 +594,9 @@ button:hover .icon,a:hover .icon{transform:scale(1.1)}
 .hero{min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:120px 32px 80px;position:relative}
 .hero h1{position:relative}
 .hero h1 .word{display:inline-block;opacity:0;transform:translateY(60px);animation:word-up .6s var(--ease-spring) forwards}
-.hero h1 .word:nth-child(1){animation-delay:.3s;color:var(--cyan)}
+.hero h1 .word:nth-child(1){animation-delay:.3s;color:var(--blue-bright)}
 .hero h1 .word:nth-child(2){animation-delay:.45s;color:#fff}
-.hero h1 .word:nth-child(3){animation-delay:.6s;color:var(--violet)}
+.hero h1 .word:nth-child(3){animation-delay:.6s;color:var(--blue-deep)}
 @keyframes word-up{to{opacity:1;transform:translateY(0)}}
 .hero-glitch{position:relative;display:inline-block}
 .hero-sub{margin-top:28px;font-family:var(--font-body);color:var(--text-dim);font-size:18px;letter-spacing:0;min-height:32px;opacity:0;animation:fade-in .5s ease-out .75s forwards}
@@ -604,28 +612,85 @@ button:hover .icon,a:hover .icon{transform:scale(1.1)}
 .scroll-chev{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);color:var(--text-faint);animation:bounce 2s ease-in-out infinite;font-size:24px}
 @keyframes bounce{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,8px)}}
 
-/* ---- glitch ---- */
-.glitch{animation:glitch 300ms steps(2) 7s infinite}
+/* ---- glitch (disabled in modern blue theme) ---- */
+.glitch{animation:none}
 @keyframes glitch{
   0%,86%,100%{clip-path:none;transform:none}
-  88%{clip-path:inset(30% 0 50% 0);transform:translate(-4px);text-shadow:2px 0 var(--cyan),-2px 0 var(--violet)}
-  92%{clip-path:inset(60% 0 10% 0);transform:translate(4px);text-shadow:-2px 0 var(--cyan),2px 0 var(--violet)}
+  88%{clip-path:inset(30% 0 50% 0);transform:translate(-2px);text-shadow:1px 0 var(--blue-bright),-1px 0 var(--blue-deep)}
+  92%{clip-path:inset(60% 0 10% 0);transform:translate(2px);text-shadow:-1px 0 var(--blue-bright),1px 0 var(--blue-deep)}
   96%{clip-path:none;transform:none;text-shadow:none}
 }
 
 /* ---- section ---- */
-section{padding:120px 0;position:relative}
-.section-tag{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-body);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--cyan);padding:6px 12px;border:1px solid var(--cyan-dim);border-radius:999px;background:var(--cyan-dim);margin-bottom:20px}
-.section-title{font-family:var(--font-display);font-weight:700;font-size:clamp(36px,6vw,64px);letter-spacing:-.02em;max-width:18ch;margin-bottom:16px}
-.section-sub{color:var(--text-dim);font-size:16px;max-width:60ch;margin-bottom:48px}
+section{padding:96px 0;position:relative}
+.section-tag{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-body);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--blue-bright);padding:5px 12px;border:1px solid var(--blue-dim);border-radius:999px;background:var(--blue-dim);margin-bottom:18px}
+.section-title{font-family:var(--font-display);font-weight:600;font-size:clamp(30px,5vw,56px);letter-spacing:-.03em;max-width:18ch;margin-bottom:14px;line-height:1.05}
+.section-sub{color:var(--text-dim);font-size:16px;max-width:60ch;margin-bottom:48px;line-height:1.6}
 
 /* ---- marquee ---- */
 .marquee{position:relative;overflow:hidden;padding:24px 0;border-block:1px solid var(--border);background:var(--surface)}
 .marquee-track{display:flex;gap:48px;animation:marq 28s linear infinite;width:max-content}
 .marquee:hover .marquee-track{animation-play-state:paused}
 .marquee-item{font-family:var(--font-body);font-size:13px;color:var(--text-dim);white-space:nowrap;display:flex;align-items:center;gap:10px}
-.marquee-item .dot{color:var(--cyan)}
+.marquee-item .dot{color:var(--blue-bright)}
 @keyframes marq{to{transform:translateX(-50%)}}
+
+/* ---- logos strip ---- */
+.logos-strip{padding:48px 0;border-block:1px solid var(--border);background:linear-gradient(180deg,transparent,rgba(46,125,255,.025),transparent)}
+.logos-strip .label{font-family:var(--font-body);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--text-faint);text-align:center;margin-bottom:20px}
+.logos-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:32px;align-items:center;justify-items:center;opacity:.5;transition:opacity .3s}
+.logos-grid:hover{opacity:.85}
+.logo-mark-text{font-family:var(--font-display);font-weight:700;font-size:18px;letter-spacing:-.02em;color:var(--text-dim);display:flex;align-items:center;gap:6px;transition:color .25s,transform .25s}
+.logo-mark-text:hover{color:var(--blue-bright);transform:translateY(-2px)}
+.logo-mark-text .dot{width:8px;height:8px;border-radius:2px;background:currentColor}
+@media (max-width:760px){.logos-grid{grid-template-columns:repeat(3,1fr);gap:20px}}
+
+/* ---- bento (refined feature highlights) ---- */
+.bento{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:200px;gap:14px}
+.bento .b{position:relative;padding:24px;border-radius:var(--radius-lg);background:var(--surface);border:1px solid var(--border);overflow:hidden;transition:border-color .3s,transform .3s}
+.bento .b:hover{border-color:var(--border-bright);transform:translateY(-3px)}
+.bento .b.span-2{grid-column:span 2}
+.bento .b.span-3{grid-column:span 3}
+.bento .b.row-2{grid-row:span 2}
+.bento .b h4{font-family:var(--font-display);font-size:18px;font-weight:600;margin-top:auto}
+.bento .b p{color:var(--text-dim);font-size:13px;margin-top:6px;font-family:var(--font-body)}
+.bento .b{display:flex;flex-direction:column}
+.bento .b .icon{margin-bottom:auto}
+@media (max-width:880px){.bento{grid-template-columns:repeat(2,1fr)}.bento .b.span-3,.bento .b.span-2{grid-column:span 2}.bento .b.row-2{grid-row:span 1}}
+
+/* ---- integration cards ---- */
+.int-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media (max-width:1000px){.int-grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:560px){.int-grid{grid-template-columns:1fr}}
+.int-card{padding:22px;border-radius:var(--radius-lg);background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:10px;transition:all .3s var(--ease-spring)}
+.int-card:hover{border-color:var(--border-bright);transform:translateY(-3px);box-shadow:0 8px 32px rgba(46,125,255,.08)}
+.int-card .head{display:flex;align-items:center;gap:12px}
+.int-card .ilogo{width:40px;height:40px;border-radius:10px;background:var(--surface-hover);display:inline-flex;align-items:center;justify-content:center;color:var(--blue-bright);font-family:var(--font-display);font-weight:700;font-size:18px}
+.int-card h4{font-family:var(--font-ui);font-weight:600;font-size:15px}
+.int-card .desc{color:var(--text-dim);font-size:12.5px;line-height:1.5;font-family:var(--font-body);min-height:48px}
+.int-card .foot{display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:8px}
+.int-card .pill{font-family:var(--font-body)}
+
+/* ---- changelog timeline ---- */
+.timeline{position:relative;padding-left:32px}
+.timeline::before{content:"";position:absolute;left:8px;top:0;bottom:0;width:1px;background:linear-gradient(180deg,var(--blue-bright),transparent)}
+.tl-item{position:relative;padding-bottom:40px}
+.tl-item::before{content:"";position:absolute;left:-29px;top:6px;width:14px;height:14px;border-radius:50%;background:var(--void);border:2px solid var(--blue-bright);box-shadow:0 0 12px var(--blue-glow)}
+.tl-item .ver{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.tl-item .ver .v{font-family:var(--font-body);font-size:13px;color:var(--blue-bright);font-weight:500}
+.tl-item .ver .d{font-family:var(--font-body);font-size:11px;color:var(--text-faint)}
+.tl-item h4{font-family:var(--font-display);font-size:20px;font-weight:600;margin-bottom:6px}
+.tl-item .changes{list-style:none;padding:0;margin-top:8px}
+.tl-item .changes li{padding:5px 0 5px 22px;color:var(--text-dim);font-size:13.5px;font-family:var(--font-body);position:relative}
+.tl-item .changes li::before{content:"";position:absolute;left:0;top:11px;width:8px;height:1px;background:var(--blue-bright)}
+.tl-item .changes li.feat::after{content:"NEW";position:absolute;left:-44px;top:5px;font-size:9px;font-weight:600;letter-spacing:.1em;color:var(--blue-bright);background:var(--blue-dim);padding:2px 5px;border-radius:3px;font-family:var(--font-body)}
+
+/* ---- keyboard shortcuts ---- */
+.shortcuts{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+@media (max-width:760px){.shortcuts{grid-template-columns:1fr}}
+.sc-row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--border)}
+.sc-row .kbd-wrap{display:flex;gap:4px}
+.sc-row kbd{font-family:var(--font-body);font-size:11px;background:var(--void-3);padding:3px 7px;border-radius:5px;color:var(--blue-bright);border:1px solid var(--border)}
 
 /* ---- features grid ---- */
 .feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
@@ -737,9 +802,9 @@ footer{padding:80px 0 48px;border-top:1px solid var(--border);background:var(--v
 .bell-badge{position:absolute;top:-4px;right:-4px;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:2px 5px;border-radius:999px;min-width:16px;text-align:center;font-family:var(--font-body)}
 
 /* welcome banner */
-.welcome{padding:32px;border-radius:var(--radius-lg);background:linear-gradient(135deg,rgba(0,245,255,.05),rgba(200,0,255,.05));border:1px solid var(--border);position:relative;overflow:hidden}
-.welcome::before{content:"";position:absolute;top:-100px;right:-100px;width:300px;height:300px;background:var(--grad-primary);border-radius:50%;filter:blur(80px);opacity:.15}
-.welcome h2{font-family:var(--font-display);font-size:32px;font-weight:700;letter-spacing:-.02em}
+.welcome{padding:32px;border-radius:var(--radius-lg);background:linear-gradient(135deg,rgba(46,125,255,.06),rgba(0,72,204,.04));border:1px solid var(--border);position:relative;overflow:hidden}
+.welcome::before{content:"";position:absolute;top:-100px;right:-100px;width:300px;height:300px;background:var(--grad-primary);border-radius:50%;filter:blur(80px);opacity:.18}
+.welcome h2{font-family:var(--font-display);font-size:32px;font-weight:600;letter-spacing:-.025em}
 .welcome p{color:var(--text-dim);margin-top:6px;font-family:var(--font-body);font-size:13px}
 
 /* stats row */
@@ -770,7 +835,7 @@ footer{padding:80px 0 48px;border-top:1px solid var(--border);background:var(--v
 @keyframes line-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .term-line .ts{color:var(--text-faint)}
 .method{font-weight:600;font-size:10px;letter-spacing:.05em;padding:1px 6px;border-radius:4px;border:1px solid currentColor}
-.method.GET{color:var(--cyan)}.method.POST{color:var(--violet)}.method.DELETE{color:var(--red)}.method.PATCH{color:var(--amber)}.method.AUTH{color:var(--green)}
+.method.GET{color:var(--blue-bright)}.method.POST{color:var(--blue)}.method.DELETE{color:var(--red)}.method.PATCH{color:var(--blue-ice)}.method.AUTH{color:var(--green)}
 .term-line .ok{color:var(--green)}.term-line .err{color:var(--red)}
 .term-cursor{display:inline-block;width:8px;height:14px;background:var(--cyan);vertical-align:-2px;margin-left:4px;animation:blink 1s steps(1) infinite}
 
@@ -1121,7 +1186,7 @@ function initParticles(){
   function size(){ c.width = innerWidth * devicePixelRatio; c.height = innerHeight * devicePixelRatio; c.style.width = innerWidth+"px"; c.style.height = innerHeight+"px"; ctx.scale(devicePixelRatio, devicePixelRatio); }
   size();
   let resizeT; addEventListener("resize", ()=>{ clearTimeout(resizeT); resizeT = setTimeout(size, 100); });
-  const colors = ["rgba(0,245,255,", "rgba(200,0,255,", "rgba(255,255,255,"];
+  const colors = ["rgba(79,168,255,", "rgba(46,125,255,", "rgba(168,204,255,"];
   let particles = [];
   function rebuild(){
     const n = Math.round((state.settings && state.settings.particleDensity != null) ? state.settings.particleDensity : 80);
@@ -1136,7 +1201,7 @@ function initParticles(){
   let mouse = { x:-9999, y:-9999, click:0 };
   addEventListener("mousemove", (e)=>{ mouse.x=e.clientX; mouse.y=e.clientY; });
   addEventListener("click", (e)=>{
-    for (let i=0;i<10;i++) particles.push({ x:e.clientX, y:e.clientY, vx:(Math.random()-.5)*6, vy:(Math.random()-.5)*6, r:Math.random()*2+1, c:colors[0], a:0, life:60 });
+  for (let i=0;i<10;i++) particles.push({ x:e.clientX, y:e.clientY, vx:(Math.random()-.5)*6, vy:(Math.random()-.5)*6, r:Math.random()*2+1, c:"rgba(79,168,255,", a:0, life:60 });
   });
   function frame(){
     ctx.fillStyle = "rgba(3,3,10,0.15)"; ctx.fillRect(0,0,innerWidth,innerHeight);
@@ -1154,7 +1219,7 @@ function initParticles(){
       // constellation
       for (let j=i+1;j<particles.length;j++){
         const q = particles[j]; const ddx=p.x-q.x, ddy=p.y-q.y; const dd=ddx*ddx+ddy*ddy;
-        if (dd < 14400){ const o = (1-dd/14400)*0.18; ctx.strokeStyle = "rgba(0,245,255,"+o+")"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); }
+        if (dd < 14400){ const o = (1-dd/14400)*0.18; ctx.strokeStyle = "rgba(79,168,255,"+o+")"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); }
       }
     }
     requestAnimationFrame(frame);
@@ -1186,7 +1251,7 @@ async function loadClerk(){
 }
 
 /* ---------- Router ---------- */
-const routes = ["/", "/dashboard", "/profile", "/keys", "/analytics", "/activity", "/settings", "/docs", "/status"];
+const routes = ["/", "/dashboard", "/profile", "/keys", "/analytics", "/activity", "/settings", "/docs", "/status", "/integrations", "/changelog"];
 function navigate(p){ if (location.hash !== "#"+p) location.hash = "#"+p; else render(); }
 addEventListener("hashchange", ()=>{ state.route = location.hash.slice(1) || "/"; render(); });
 
@@ -1220,6 +1285,8 @@ async function viewFor(r){
   else if (r === "/settings")  wrap.appendChild(await renderSettings());
   else if (r === "/docs")      wrap.appendChild(await renderDocs());
   else if (r === "/status")    wrap.appendChild(await renderStatus());
+  else if (r === "/integrations") wrap.appendChild(await renderIntegrations());
+  else if (r === "/changelog") wrap.appendChild(await renderChangelog());
   else                          wrap.appendChild(notFound());
   return wrap;
 }
@@ -1260,8 +1327,10 @@ function dashShell(content){
     ["/keys","i-key","API Keys"],
     ["/analytics","i-chart","Analytics"],
     ["/activity","i-activity","Activity"],
+    ["/integrations","i-zap","Integrations"],
     ["/settings","i-settings","Settings"],
     ["/docs","i-code","Docs"],
+    ["/changelog","i-sparkles","Changelog"],
     ["/status","i-cpu","Status"]
   ];
   const u = state.user || {};
@@ -1299,6 +1368,7 @@ function dashShell(content){
     sb.querySelector("#signout-btn").onclick = async ()=>{ if (state.clerk) await state.clerk.signOut(); state.user=null; navigate("/"); };
     top.querySelector("#bell-btn").onclick = openDrawer;
     top.querySelector("#palette-btn").onclick = openPalette;
+    top.querySelector("#quick-help").onclick = openShortcuts;
     top.querySelector("#top-search").addEventListener("focus", openPalette);
   }, 0);
   return root;
@@ -1312,8 +1382,8 @@ async function renderLanding(){
     '<div class="container nav-inner">'+
       '<a href="#/" class="logo" data-testid="logo"><div class="logo-mark"></div>Void<span class="text-cyan">/</span>Interface</a>'+
       '<div class="nav-links">'+
-        '<a href="#features">Features</a><a href="#how">How it works</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a>'+
-        '<a href="#/docs">Docs</a><a href="#/status">Status</a>'+
+        '<a href="#features">Features</a><a href="#how">How it works</a><a href="#/integrations">Integrations</a><a href="#pricing">Pricing</a>'+
+        '<a href="#/docs">Docs</a><a href="#/changelog">Changelog</a><a href="#/status">Status</a>'+
       '</div>'+
       '<div class="nav-cta"><button class="btn btn-ghost" data-testid="nav-signin" id="nav-signin">Sign In</button><button class="btn btn-primary" data-testid="nav-signup" id="nav-signup">Get Started <svg class="icon" width="14" height="14"><use href="#i-arrow-right"/></svg></button></div>'+
     '</div>'
@@ -1343,6 +1413,15 @@ async function renderLanding(){
   for (let i=0;i<2;i++) for (const it of items) mar += '<div class="marquee-item">'+it+'<span class="dot">·</span></div>';
   mar += '</div>';
   root.appendChild(h("div",{ class:"marquee", "data-testid":"marquee", html: mar }));
+
+  // customer logos strip
+  const logos = ["acme","stellar","obelisk","hyperion","monolith","drift","nimbus","prism","atlas","vortex","quasar","helix"];
+  let lg = '<div class="logos-grid">';
+  for (const n of logos.slice(0,6)) lg += '<a class="logo-mark-text" href="#"><span class="dot"></span>'+n+'</a>';
+  lg += '</div>';
+  root.appendChild(h("div",{ class:"logos-strip", "data-testid":"logos-strip", html:
+    '<div class="container"><div class="label">Trusted by teams shipping at the edge</div>'+lg+'</div>'
+  }));
 
   // features
   const features = [
@@ -1410,7 +1489,7 @@ async function renderLanding(){
     '<div class="container"><div class="foot-grid">'+
       '<div><div class="logo"><div class="logo-mark"></div>Void Interface</div><p class="text-dim mt-3" style="font-size:13px;max-width:34ch">A single-file edge-native dashboard template. Built on Cloudflare Workers, secured by Clerk.</p>'+
       '<div class="socials"><a href="#" aria-label="GitHub"><svg class="icon"><use href="#i-code"/></svg></a><a href="#" aria-label="X"><svg class="icon"><use href="#i-zap"/></svg></a><a href="#" aria-label="Discord"><svg class="icon"><use href="#i-globe"/></svg></a></div></div>'+
-      '<div class="foot-col"><h5>Product</h5><a href="#features">Features</a><a href="#pricing">Pricing</a><a href="#/docs">Docs</a><a href="#/status">Status</a></div>'+
+      '<div class="foot-col"><h5>Product</h5><a href="#features">Features</a><a href="#pricing">Pricing</a><a href="#/integrations">Integrations</a><a href="#/docs">Docs</a><a href="#/changelog">Changelog</a><a href="#/status">Status</a></div>'+
       '<div class="foot-col"><h5>Company</h5><a href="#">About</a><a href="#">Blog</a><a href="#">Careers</a><a href="#">Contact</a></div>'+
       '<div class="foot-col"><h5>Legal</h5><a href="#">Privacy</a><a href="#">Terms</a><a href="#">Cookies</a><a href="#">Security</a></div>'+
     '</div><div class="foot-bottom"><div>© 2026 Void Interface · krix_ishere stack</div><div class="text-cyan">All systems operational</div></div></div>'
@@ -1580,13 +1659,13 @@ function drawSparkline(canvas, data){
     const showCount = Math.max(2, Math.ceil(pts.length * k));
     const visible = pts.slice(0, showCount);
     // area
-    const grad = ctx.createLinearGradient(0,0,0,hh); grad.addColorStop(0,"rgba(0,245,255,0.35)"); grad.addColorStop(1,"rgba(0,245,255,0.00)");
+    const grad = ctx.createLinearGradient(0,0,0,hh); grad.addColorStop(0,"rgba(79,168,255,0.32)"); grad.addColorStop(1,"rgba(46,125,255,0.00)");
     ctx.fillStyle = grad; ctx.beginPath(); ctx.moveTo(visible[0][0], hh-pad);
     visible.forEach(p=> ctx.lineTo(p[0], p[1])); ctx.lineTo(visible[visible.length-1][0], hh-pad); ctx.closePath(); ctx.fill();
     // line
-    ctx.strokeStyle = "#00f5ff"; ctx.lineWidth = 2; ctx.beginPath(); visible.forEach((p,i)=> i ? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1])); ctx.stroke();
+    ctx.strokeStyle = "#4fa8ff"; ctx.lineWidth = 2; ctx.beginPath(); visible.forEach((p,i)=> i ? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1])); ctx.stroke();
     // dots
-    ctx.fillStyle = "#c800ff"; visible.forEach(p=>{ ctx.beginPath(); ctx.arc(p[0],p[1],3,0,Math.PI*2); ctx.fill(); });
+    ctx.fillStyle = "#2e7dff"; visible.forEach(p=>{ ctx.beginPath(); ctx.arc(p[0],p[1],3,0,Math.PI*2); ctx.fill(); });
     if (k < 1){ frame++; requestAnimationFrame(tick); }
   }
   tick();
@@ -1642,7 +1721,7 @@ function drawHistogram(canvas, buckets){
       let f=0, T=24;
       function tick(){
         ctx.clearRect(x-2, 0, bw+4, hh);
-        const grad = ctx.createLinearGradient(0,hh-pad,0,hh-pad-targetH); grad.addColorStop(0,"rgba(0,245,255,0.7)"); grad.addColorStop(1,"rgba(200,0,255,0.7)");
+        const grad = ctx.createLinearGradient(0,hh-pad,0,hh-pad-targetH); grad.addColorStop(0,"rgba(79,168,255,0.85)"); grad.addColorStop(1,"rgba(46,125,255,0.4)");
         ctx.fillStyle = grad; const ch = (targetH * f/T);
         ctx.fillRect(x, hh-pad-ch, bw, ch);
         ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "500 10px IBM Plex Mono"; ctx.textAlign="center";
@@ -1822,7 +1901,7 @@ function confetti(){
   const c = h("canvas",{ style:"position:fixed;inset:0;z-index:1000;pointer-events:none" });
   document.body.appendChild(c);
   const ctx = c.getContext("2d"); c.width = innerWidth; c.height = innerHeight;
-  const colors = ["#00f5ff","#c800ff","#ff0080","#00ff88","#ffaa00"];
+  const colors = ["#4fa8ff","#2e7dff","#a8ccff","#0048cc","#36d399"];
   const ps = Array.from({length:60},()=>({ x:innerWidth/2, y:innerHeight/2, vx:(Math.random()-.5)*16, vy:(Math.random()-.5)*16-4, r:4+Math.random()*6, c:colors[(Math.random()*colors.length)|0], rot:Math.random()*Math.PI, vr:(Math.random()-.5)*.4, life:120 }));
   function tick(){
     ctx.clearRect(0,0,c.width,c.height);
@@ -1864,7 +1943,7 @@ async function renderAnalytics(){
 
   setTimeout(()=>{
     drawSparkline($("#big-spark"), an.days.map(d=>d.requests||Math.round(20+Math.random()*100)));
-    const colors = { GET:"#00f5ff", POST:"#c800ff", DELETE:"#ff3366", PATCH:"#ffaa00" };
+    const colors = { GET:"#4fa8ff", POST:"#2e7dff", DELETE:"#ef4458", PATCH:"#a8ccff" };
     const segs = Object.entries(an.byMethod).filter(([k,v])=>v).map(([k,v])=>({ value:v, color:colors[k]||"#888", label:k }));
     if (!segs.length) ["GET","POST","DELETE","PATCH"].forEach(k=> segs.push({ value:Math.floor(Math.random()*40)+5, color:colors[k], label:k }));
     drawDonut($("#donut"), segs);
@@ -1993,7 +2072,7 @@ function setNotif(s){
   return '<div class="card">'+items.map(([t,d,k])=>'<div class="flex justify-between items-center" style="padding:14px 0;border-bottom:1px solid var(--border)"><div><div style="font-weight:600">'+t+'</div><div class="text-faint text-xs">'+d+'</div></div><label class="toggle"><input type="checkbox" data-notif="'+k+'" '+(n[k]?"checked":"")+'/><span class="track"></span><span class="thumb"></span></label></div>').join("")+'</div>';
 }
 function setAppearance(s){
-  const colors = ["#00f5ff","#c800ff","#ff0080","#00ff88","#ffaa00","#ff3366","#9eff00","#ffffff"];
+  const colors = ["#4fa8ff","#2e7dff","#a8ccff","#0048cc","#001f5f","#36d399","#ffffff","#7da5e8"];
   return '<div class="card"><h3>Theme</h3><div class="flex gap-3 mt-3"><button class="btn btn-ghost" data-theme="dark"><svg class="icon"><use href="#i-moon"/></svg> Dark</button><button class="btn btn-ghost" data-theme="light"><svg class="icon"><use href="#i-sun"/></svg> Light</button><button class="btn btn-ghost" data-theme="system">System</button></div>'+
     '<h3 class="mt-6">Accent</h3><div class="swatches mt-2">'+colors.map(c=>'<div class="swatch '+(s.accentColor===c?"active":"")+'" data-accent="'+c+'" style="background:'+c+'"></div>').join("")+'</div>'+
     '<h3 class="mt-6">Font size <span class="text-faint" id="fs-val">'+(s.fontSize||14)+'px</span></h3><input type="range" min="12" max="20" value="'+(s.fontSize||14)+'" class="slider" data-set-num="fontSize" data-target="--font-base">'+
@@ -2110,7 +2189,160 @@ function apiTable(){
   return '<div class="card mt-3" style="padding:0;overflow:hidden"><table style="width:100%;border-collapse:collapse"><thead><tr style="text-align:left"><th style="padding:14px;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--text-faint);border-bottom:1px solid var(--border)">Method</th><th style="padding:14px;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--text-faint);border-bottom:1px solid var(--border)">Endpoint</th><th style="padding:14px;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--text-faint);border-bottom:1px solid var(--border)">Description</th></tr></thead><tbody>'+rows.map(([m,p,d])=>'<tr><td style="padding:14px;border-bottom:1px solid var(--border)"><span class="method '+m+'">'+m+'</span></td><td style="padding:14px;border-bottom:1px solid var(--border)" class="mono text-cyan">'+p+'</td><td style="padding:14px;border-bottom:1px solid var(--border);color:var(--text-dim)">'+d+'</td></tr>').join("")+'</tbody></table></div>';
 }
 
-/* ---------- Page: Status ---------- */
+/* ---------- Page: Integrations ---------- */
+async function renderIntegrations(){
+  const inner = h("div",{ class:"stagger" });
+  const cats = [
+    ["Popular","star",[
+      ["Stripe","SP","Accept payments and subscriptions globally",true,"payments"],
+      ["GitHub","GH","Sync issues, PRs and releases automatically",true,"dev"],
+      ["Slack","SL","Alerts, deploy notifications, command bots",true,"comms"],
+      ["Linear","LN","Engineering issue tracking with bidirectional sync",false,"dev"]
+    ]],
+    ["Auth & Identity","shield",[
+      ["Clerk","CK","Hosted user management with social login",true,"auth"],
+      ["Auth0","A0","Enterprise SSO and identity federation",false,"auth"],
+      ["WorkOS","WO","SAML, SCIM and admin portal in one API",false,"auth"]
+    ]],
+    ["AI & ML","sparkles",[
+      ["OpenAI","OA","GPT, embeddings and image generation",true,"ai"],
+      ["Anthropic","AT","Claude family of models for safe AI",true,"ai"],
+      ["Pinecone","PC","Vector database for retrieval and search",false,"ai"],
+      ["Replicate","RP","Run any open-source model on demand",false,"ai"]
+    ]],
+    ["Comms","bell",[
+      ["Twilio","TW","Programmable SMS, voice, WhatsApp",true,"comms"],
+      ["Resend","RS","Modern email API with React templates",true,"comms"],
+      ["Discord","DC","Webhook drops to your server",false,"comms"],
+      ["PostHog","PH","Product analytics and feature flags",true,"data"]
+    ]]
+  ];
+  let html = '<div class="caption">Connect</div><h2 class="h2">Integrations</h2><p class="text-dim mt-2 body" style="max-width:60ch">Wire up your favourite services in seconds. Configure once, fire from anywhere on the edge.</p>';
+  // Filter chips
+  html += '<div class="flex gap-2 flex-wrap mt-6" id="int-filter">'+
+    '<button class="pill cyan" data-fc="all">All</button>'+
+    '<button class="pill" data-fc="payments">Payments</button>'+
+    '<button class="pill" data-fc="dev">Dev tools</button>'+
+    '<button class="pill" data-fc="comms">Comms</button>'+
+    '<button class="pill" data-fc="ai">AI / ML</button>'+
+    '<button class="pill" data-fc="auth">Auth</button>'+
+    '<button class="pill" data-fc="data">Data</button>'+
+    '</div>';
+  for (const [title, ic, items] of cats){
+    html += '<h3 class="h4 mt-8" style="font-family:var(--font-display);font-weight:600">'+title+'</h3>';
+    html += '<div class="int-grid mt-3">';
+    for (const [name, abbr, desc, connected, cat] of items){
+      html += '<div class="int-card" data-int="'+cat+'" data-testid="int-card"><div class="head"><div class="ilogo">'+abbr+'</div><h4>'+name+'</h4></div>'+
+        '<div class="desc">'+desc+'</div>'+
+        '<div class="foot">'+
+        (connected?'<span class="pill green">● Connected</span>':'<span class="pill" style="color:var(--text-faint)">Available</span>')+
+        '<button class="btn btn-ghost btn-sm" data-testid="int-toggle">'+(connected?'Manage':'Connect')+' <svg class="icon" width="12" height="12"><use href="#i-arrow-right"/></svg></button>'+
+        '</div></div>';
+    }
+    html += '</div>';
+  }
+  inner.innerHTML = html;
+  setTimeout(()=>{
+    let cur = "all";
+    $$("#int-filter [data-fc]").forEach(b=> b.onclick = ()=>{
+      cur = b.dataset.fc; $$("#int-filter [data-fc]").forEach(x=> x.classList.toggle("cyan", x===b));
+      $$("[data-int]").forEach(c=>{ const show = cur==="all" || c.dataset.int===cur; c.style.display = show?"":"none"; });
+    });
+    $$("[data-testid=int-toggle]").forEach(b=> b.onclick = ()=> toast("info","Demo mode — integration flow disabled."));
+  }, 30);
+  return dashShell(inner);
+}
+
+/* ---------- Page: Changelog ---------- */
+async function renderChangelog(){
+  const inner = h("div",{ class:"stagger" });
+  const versions = [
+    ["v2.4.0","Jan 5, 2026","Blue refresh + new pages",[
+      ["Refined to a single-hue blue palette across all surfaces and charts.",true],
+      ["New /integrations page with 15 connectors and category filters.",true],
+      ["New /changelog page (this one) with semantic version timeline.",true],
+      ["Keyboard shortcuts modal (press ? anywhere).",true],
+      ["Customer logos strip on landing.",true],
+      ["Dropped Syne / IBM Plex for Space Grotesk + JetBrains Mono + Manrope.",false]
+    ]],
+    ["v2.3.0","Dec 18, 2025","Live activity + analytics",[
+      ["Real-time activity feed with filter tabs and search.",true],
+      ["Analytics: 30-day sparkline, donut by method, world dot map, response histogram.",true],
+      ["System health rings (CPU / Memory / KV Ops).",false]
+    ]],
+    ["v2.2.0","Nov 30, 2025","Settings overhaul",[
+      ["Six-tab settings (Account, Security, Notifications, Appearance, Developer, Danger).",true],
+      ["Live sliders: grid opacity, particle density, aurora intensity, font size.",true],
+      ["Sound effects (Web Audio synth, no files).",false],
+      ["Reduce-motion mode respected globally.",false]
+    ]],
+    ["v2.1.0","Nov 12, 2025","Command palette + cursor",[
+      ["Cmd+K command palette with arrow nav.",true],
+      ["Two-element magnetic cursor with hover states.",true],
+      ["Confetti burst on first API key.",true]
+    ]],
+    ["v2.0.0","Oct 28, 2025","Single-file rebuild",[
+      ["Entire app moved to one worker.js (HTML/CSS/JS embedded).",true],
+      ["Clerk JWT verification via JWKS, networkless cached.",true],
+      ["KV-backed user namespacing.",true]
+    ]]
+  ];
+  let html = '<div class="caption">Release notes</div><h2 class="h2">Changelog</h2><p class="text-dim mt-2 body" style="max-width:60ch">Every shipped update, since the rewrite.</p>';
+  html += '<div class="timeline mt-8">';
+  for (const [ver,date,title,changes] of versions){
+    html += '<div class="tl-item" data-testid="tl-item">'+
+      '<div class="ver"><span class="v">'+ver+'</span><span class="d">·</span><span class="d">'+date+'</span></div>'+
+      '<h4>'+title+'</h4>'+
+      '<ul class="changes">';
+    for (const [c, isFeat] of changes){
+      html += '<li class="'+(isFeat?"feat":"")+'">'+c+'</li>';
+    }
+    html += '</ul></div>';
+  }
+  html += '</div>';
+  // Subscribe block
+  html += '<div class="card mt-8" style="text-align:center;padding:48px"><h3 class="h3">Stay in the loop</h3><p class="text-dim mt-2 body" style="max-width:48ch;margin:8px auto 0">Get the next changelog drop in your inbox.</p>'+
+    '<div class="flex gap-3 mt-4 justify-center"><input class="input" placeholder="you@domain.com" style="flex:0 1 320px;padding:12px 16px;border-radius:10px;background:var(--surface);border:1px solid var(--border);font-family:var(--font-body)" data-testid="changelog-email"/><button class="btn btn-primary" data-testid="changelog-subscribe">Subscribe <svg class="icon" width="14" height="14"><use href="#i-arrow-right"/></svg></button></div></div>';
+  inner.innerHTML = html;
+  setTimeout(()=>{
+    const sb = $("[data-testid=changelog-subscribe]");
+    if (sb) sb.onclick = ()=> { const e = $("[data-testid=changelog-email]"); if (e && e.value.includes("@")){ toast("success","You're in. Watch your inbox."); e.value=""; } else toast("warning","Enter a valid email."); };
+  }, 30);
+  return dashShell(inner);
+}
+
+/* ---------- Keyboard shortcuts modal ---------- */
+function openShortcuts(){
+  const cur = $("#sc-modal");
+  if (cur){ cur.remove(); return; }
+  const back = h("div",{ class:"cmd-back open", id:"sc-modal", "data-testid":"sc-modal" });
+  const rows = [
+    ["Open command palette",["Ctrl","K"]],
+    ["Show this help",["?"]],
+    ["Go to Dashboard",["G","D"]],
+    ["Go to API Keys",["G","K"]],
+    ["Go to Analytics",["G","A"]],
+    ["Go to Activity",["G","L"]],
+    ["Go to Settings",["G","S"]],
+    ["Open Notifications",["N"]],
+    ["Toggle sidebar",["["]],
+    ["Sign out",["Ctrl","Q"]],
+    ["Close any modal",["Esc"]],
+    ["Search current page",["/"]]
+  ];
+  let html = '<div class="cmd" style="width:min(680px,90vw);padding:28px"><div class="flex justify-between items-center mb-4"><div><div class="caption">Reference</div><h3 class="h3">Keyboard Shortcuts</h3></div><button class="btn-icon" id="sc-close" data-testid="sc-close" aria-label="close"><svg class="icon"><use href="#i-x"/></svg></button></div>';
+  html += '<div class="shortcuts">';
+  for (const [label, keys] of rows){
+    html += '<div class="sc-row"><span class="text-dim text-sm">'+label+'</span><div class="kbd-wrap">'+keys.map(k=>'<kbd>'+k+'</kbd>').join('')+'</div></div>';
+  }
+  html += '</div><div class="text-faint text-xs mt-4 mono" style="text-align:center">Tip: many of these only fire when no input is focused.</div></div>';
+  back.innerHTML = html;
+  document.body.appendChild(back);
+  back.querySelector("#sc-close").onclick = ()=> back.remove();
+  back.addEventListener("click",(e)=>{ if (e.target === back) back.remove(); });
+}
+
+
 async function renderStatus(){
   const inner = h("div",{ class:"stagger" });
   const s = await api("/api/status").catch(()=>({services:[],incidents:[]}));
@@ -2146,10 +2378,13 @@ const COMMANDS = [
   ["Go to API Keys","/keys","i-key","G K"],
   ["Go to Analytics","/analytics","i-chart","G A"],
   ["Go to Activity","/activity","i-activity","G L"],
+  ["Go to Integrations","/integrations","i-zap","G I"],
   ["Go to Settings","/settings","i-settings","G S"],
   ["Open Docs","/docs","i-code",""],
+  ["Open Changelog","/changelog","i-sparkles",""],
   ["Status Page","/status","i-cpu",""],
   ["Customize Appearance","/settings","i-sparkles",""],
+  ["Keyboard Shortcuts","#shortcuts","i-terminal","?"],
   ["Sign Out","#signout","i-logout",""]
 ];
 function openPalette(){
@@ -2167,6 +2402,7 @@ function paintPalette(q){
 function runPalette(cmd){
   closePalette();
   if (cmd === "#signout"){ if (state.clerk) state.clerk.signOut().then(()=> navigate("/")); return; }
+  if (cmd === "#shortcuts"){ openShortcuts(); return; }
   navigate(cmd);
 }
 
@@ -2221,7 +2457,8 @@ async function boot(){
   // global key bindings
   addEventListener("keydown",(e)=>{
     if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="k"){ e.preventDefault(); openPalette(); }
-    else if (e.key === "Escape"){ closePalette(); closeDrawer(); }
+    else if (e.key === "Escape"){ closePalette(); closeDrawer(); const sm = $("#sc-modal"); if (sm) sm.remove(); }
+    else if (e.key === "?" && !["INPUT","TEXTAREA"].includes(document.activeElement && document.activeElement.tagName)){ e.preventDefault(); openShortcuts(); }
   });
   // palette input
   $("#cmd-input").addEventListener("input",(e)=> paintPalette(e.target.value));

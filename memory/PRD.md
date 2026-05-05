@@ -11,22 +11,23 @@ Build a single `worker.js` Cloudflare Worker that serves the entire "Void Interf
 - **Frontend:** vanilla JS hash router, no framework, no build step
 - **Deploy:** `wrangler deploy` after `wrangler kv namespace create` and `wrangler secret put CLERK_SECRET_KEY`
 
-## Implemented (Jan 5, 2026)
+## Implemented (Jan 5, 2026 — initial) + (updated Jan 5, 2026 — blue refresh)
 - All 14 API routes (`/api/health`, `/api/me`, `/api/keys` CRUD, `/api/activity`, `/api/analytics`, `/api/settings`, `/api/webhook-test`, `/api/notifications`, `/api/status`)
 - Clerk JWT verification (RSASSA-PKCS1-v1_5, JWKS cached)
 - KV schema: `settings:<uid>`, `keys:<uid>`, `logs:<uid>` (last 100), `notifications:<uid>` (last 50), `analytics:<uid>:<date>`
 - Geo headers on every response: `X-Edge-Location`, `X-Request-Country`, `X-Latency-Ms`
-- All 10 pages: Landing, Dashboard, Profile, API Keys, Analytics, Activity, Settings (6 tabs), Docs, Status, Notifications drawer
-- Background system: 3 aurora blobs, drifting grid, scan line, corner brackets, particle canvas with constellation lines + mouse repulsion + click bursts, spotlight follow
+- All 12 pages (added /integrations and /changelog): Landing, Dashboard, Profile, API Keys, Analytics, Activity, Integrations, Settings (6 tabs), Docs, Changelog, Status, Notifications drawer, **Keyboard Shortcuts modal** (`?` key)
+- Refined design: pure blue/black palette (no more cyan/violet/pink), Space Grotesk + JetBrains Mono + Manrope fonts, lighter section padding, simpler gradients, glitch animation removed, customer logos strip
+- Background system: 3 blue aurora blobs, drifting grid, scan line, corner brackets, particle canvas (all blue) with constellation lines + mouse repulsion + click bursts, spotlight follow
 - 30+ inlined SVG icons with stroke-current animations
 - Custom 2-element cursor (dot + lagging ring) with hover states
-- Hero: staggered word entrance, glitch every 7s, typewriter, magnetic CTAs, ripple
-- Charts: animated sparkline (Canvas), donut (staggered draw), histogram (grow from bottom), 64-city world dot map
-- Command palette (`Ctrl+K` / `Cmd+K`) with arrow nav and search
+- Hero: staggered word entrance (BUILD bright-blue / SHIP white / SCALE deep-blue), typewriter, magnetic CTAs, ripple
+- Charts: animated sparkline (blue gradient), donut (blue family), histogram (blue grow), 64-city world dot map
+- Command palette (`Ctrl+K` / `Cmd+K`) with arrow nav and search; new entries for Integrations, Changelog, Keyboard Shortcuts
 - Toasts (5 types, swipe/click dismiss, progress bar, optional sound)
-- Confetti on first API key creation (50 physics particles)
+- Confetti on first API key creation (blue palette)
 - Number counters animate from 0 on enter
-- Settings: live sliders for grid opacity, particle density, aurora intensity, font size, accent color (8 swatches)
+- Settings: live sliders for grid opacity, particle density, aurora intensity, font size, accent color (8 blue swatches)
 - Sidebar collapse persisted in localStorage; mobile bottom nav for ≤880px
 - Reduce-motion mode respected
 - Skeleton/progress bar loading states
