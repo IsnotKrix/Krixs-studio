@@ -125,17 +125,15 @@ async function getUser(req, env) {
 
 function isAdmin(user, env) {
   if (!user) return false;
-  // 1. Clerk publicMetadata.role === 'admin' (requires session token template
-  //    "public_metadata": "{{user.public_metadata}}" in Clerk dashboard)
+  const userId = user.sub || "";
+  // 1. Primary: ADMIN_USER_IDS env var — CSV of Clerk user IDs
+  const adminIds = String(env.ADMIN_USER_IDS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  if (userId && adminIds.includes(userId)) return true;
+  // 2. Clerk publicMetadata.role === 'admin' (requires session token template)
   const meta = user.public_metadata || (user.metadata && user.metadata.public) || {};
   if (meta && meta.role === "admin") return true;
   if (user.org_role === "admin") return true;
-  // 2. Bootstrap fallback: ADMIN_EMAILS env var (CSV) — useful before
-  //    publicMetadata is wired in Clerk dashboard.
-  const emails = String(env.ADMIN_EMAILS || "")
-    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const e = (user.email || "").toLowerCase();
-  if (e && emails.includes(e)) return true;
   return false;
 }
 
@@ -204,6 +202,55 @@ async function pushNotification(env, userId, type, message) {
   await kvPut(env, k, cur);
 }
 
+// ---------- Rate limiter (in-memory per isolate + KV for persistence) ----------
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX = 60; // requests per window
+const AUTH_FAIL_MAX = 5; // max auth failures before block
+const AUTH_BLOCK_DURATION = 900000; // 15 min block
+const rateBuckets = new Map();
+const authFails = new Map();
+
+function getClientIP(req) {
+  return req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
+}
+
+function checkRateLimit(ip) {
+  const n = now();
+  let bucket = rateBuckets.get(ip);
+  if (!bucket || n - bucket.ts > RATE_LIMIT_WINDOW) {
+    bucket = { ts: n, count: 0 };
+    rateBuckets.set(ip, bucket);
+  }
+  bucket.count++;
+  if (bucket.count > RATE_LIMIT_MAX) return { limited: true, remaining: 0, reset: Math.ceil((bucket.ts + RATE_LIMIT_WINDOW - n) / 1000) };
+  return { limited: false, remaining: RATE_LIMIT_MAX - bucket.count, reset: Math.ceil((bucket.ts + RATE_LIMIT_WINDOW - n) / 1000) };
+}
+
+function recordAuthFailure(ip) {
+  const n = now();
+  let entry = authFails.get(ip);
+  if (!entry || n - entry.firstFail > AUTH_BLOCK_DURATION) {
+    entry = { firstFail: n, count: 0, blocked: false, blockedAt: 0 };
+    authFails.set(ip, entry);
+  }
+  entry.count++;
+  if (entry.count >= AUTH_FAIL_MAX) {
+    entry.blocked = true;
+    entry.blockedAt = n;
+  }
+  return entry;
+}
+
+function isIPBlocked(ip) {
+  const entry = authFails.get(ip);
+  if (!entry || !entry.blocked) return false;
+  if (now() - entry.blockedAt > AUTH_BLOCK_DURATION) {
+    authFails.delete(ip);
+    return false;
+  }
+  return true;
+}
+
 // ---------- API router ----------
 async function handleApi(req, env, url) {
   const path = url.pathname;
@@ -211,18 +258,39 @@ async function handleApi(req, env, url) {
   const cf = req.cf || {};
   const country = cf.country || "??";
   const colo = cf.colo || "???";
+  const clientIP = getClientIP(req);
   const t0 = now();
   const finish = (resp) => {
     const dt = now() - t0;
     resp.headers.set("X-Edge-Location", colo);
     resp.headers.set("X-Request-Country", country);
     resp.headers.set("X-Latency-Ms", String(dt));
+    resp.headers.set("X-Content-Type-Options", "nosniff");
+    resp.headers.set("X-Frame-Options", "DENY");
+    resp.headers.set("X-XSS-Protection", "1; mode=block");
+    resp.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+    resp.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     return resp;
   };
 
   if (method === "OPTIONS") return finish(json({}));
 
-  // Public
+  // Check if IP is blocked from brute force
+  if (isIPBlocked(clientIP)) {
+    return finish(json({ error: "too_many_requests", message: "Too many failed attempts. Try again later.", retryAfter: 900 }, { status: 429 }));
+  }
+
+  // Rate limiting
+  const rl = checkRateLimit(clientIP);
+  if (rl.limited) {
+    const resp = json({ error: "rate_limited", message: "Rate limit exceeded. Slow down.", retryAfter: rl.reset }, { status: 429 });
+    resp.headers.set("Retry-After", String(rl.reset));
+    resp.headers.set("X-RateLimit-Limit", String(RATE_LIMIT_MAX));
+    resp.headers.set("X-RateLimit-Remaining", "0");
+    return finish(resp);
+  }
+
+  // Public endpoints
   if (path === "/api/health") {
     return finish(json({ status: "ok", region: colo, country, latency: 1, ts: now() }));
   }
@@ -239,9 +307,22 @@ async function handleApi(req, env, url) {
     }));
   }
 
+  // Public content API — serves admin-managed content to all users
+  const publicContent = path.match(/^\/api\/content\/(changelog|integrations|status)$/);
+  if (publicContent && method === "GET") {
+    const ckey = "content:" + publicContent[1];
+    const v = await kvGet(env, ckey, null);
+    return finish(json({ key: publicContent[1], data: v }));
+  }
+
   // Auth required below
   const user = await getUser(req, env);
-  if (!user) return finish(json({ error: "unauthorized" }, { status: 401 }));
+  if (!user) {
+    recordAuthFailure(clientIP);
+    const resp = finish(json({ error: "unauthorized" }, { status: 401 }));
+    resp.headers.set("X-RateLimit-Remaining", String(rl.remaining));
+    return resp;
+  }
   const userId = user.sub;
 
   // /api/me
@@ -643,7 +724,7 @@ const CSS = `
   --grid-opacity:.4;--particle-density:60;--aurora-intensity:.08;
   --accent:var(--blue);
 }
-html,body{height:100%;background:var(--void);color:var(--text);font-family:var(--font-ui);font-size:14px;line-height:1.6;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+html,body{min-height:100%;background:var(--void);color:var(--text);font-family:var(--font-ui);font-size:14px;line-height:1.6;overflow-x:hidden;-webkit-font-smoothing:antialiased}
 body{position:relative;min-height:100vh}
 a{color:inherit;text-decoration:none}
 button{font:inherit;color:inherit;background:transparent;border:0;cursor:pointer}
@@ -656,7 +737,7 @@ input,select,textarea{font:inherit;color:inherit;background:transparent;border:0
 
 /* ---- background system ---- */
 #bg-layers{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
-#shader-bg{position:absolute;inset:0;width:100%;height:100%;opacity:.55;mix-blend-mode:screen}
+#shader-bg{position:absolute;inset:0;width:100%;height:100%;opacity:.45;mix-blend-mode:screen}
 .grid-bg{position:absolute;inset:-60px;background-image:
   linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
   linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
@@ -670,14 +751,12 @@ input,select,textarea{font:inherit;color:inherit;background:transparent;border:0
 @keyframes blob-2{0%,100%{transform:translate(60vw,20vh) scale(1.2)}50%{transform:translate(30vw,60vh) scale(.9)}}
 @keyframes blob-3{0%,100%{transform:translate(80vw,80vh) scale(1)}40%{transform:translate(10vw,40vh) scale(1.4)}}
 #particles{position:fixed;inset:0;z-index:1;pointer-events:none}
-.scan-line{position:fixed;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);animation:scan-line 8s linear infinite;pointer-events:none;z-index:2}
-@keyframes scan-line{0%{top:-2px;opacity:0}5%{opacity:1}95%{opacity:1}100%{top:100vh;opacity:0}}
-.corner{position:fixed;width:24px;height:24px;border:1px solid var(--cyan);z-index:3;pointer-events:none;opacity:.4}
-.corner.tl{top:16px;left:16px;border-right:0;border-bottom:0;animation:corner-pulse 4s ease-in-out infinite 0s}
-.corner.tr{top:16px;right:16px;border-left:0;border-bottom:0;animation:corner-pulse 4s ease-in-out infinite 1s}
-.corner.bl{bottom:16px;left:16px;border-right:0;border-top:0;animation:corner-pulse 4s ease-in-out infinite 2s}
-.corner.br{bottom:16px;right:16px;border-left:0;border-top:0;animation:corner-pulse 4s ease-in-out infinite 3s}
-@keyframes corner-pulse{0%,100%{opacity:.2}50%{opacity:.7}}
+/* scan-line removed */
+.corner{position:fixed;width:20px;height:20px;border:1px solid rgba(46,125,255,.15);z-index:3;pointer-events:none;opacity:.3}
+.corner.tl{top:12px;left:12px;border-right:0;border-bottom:0}
+.corner.tr{top:12px;right:12px;border-left:0;border-bottom:0}
+.corner.bl{bottom:12px;left:12px;border-right:0;border-top:0}
+.corner.br{bottom:12px;right:12px;border-left:0;border-top:0}
 #spotlight{position:fixed;inset:0;z-index:2;pointer-events:none;background:radial-gradient(400px circle at var(--mx,50%) var(--my,50%),rgba(0,245,255,.05),transparent 70%);transition:background .25s linear}
 
 /* ---- cursor ---- */
@@ -762,11 +841,11 @@ button:hover .icon,a:hover .icon{transform:scale(1.1)}
 /* ---- hero ---- */
 .hero{min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:120px 32px 80px;position:relative}
 .hero h1{position:relative}
-.hero h1 .word{display:inline-block;opacity:0;transform:translateY(60px);animation:word-up .6s var(--ease-spring) forwards}
+.hero h1 .word{display:inline-block;opacity:0;transform:translateY(40px) scale(0.95);animation:word-up .7s var(--ease-spring) forwards}
 .hero h1 .word:nth-child(1){animation-delay:.3s;color:var(--blue-bright)}
-.hero h1 .word:nth-child(2){animation-delay:.45s;color:#fff}
-.hero h1 .word:nth-child(3){animation-delay:.6s;color:var(--blue-deep)}
-@keyframes word-up{to{opacity:1;transform:translateY(0)}}
+.hero h1 .word:nth-child(2){animation-delay:.5s;color:#fff}
+.hero h1 .word:nth-child(3){animation-delay:.7s;color:var(--blue-ice)}
+@keyframes word-up{to{opacity:1;transform:translateY(0) scale(1)}}
 .hero-glitch{position:relative;display:inline-block}
 .hero-sub{margin-top:28px;font-family:var(--font-body);color:var(--text-dim);font-size:18px;letter-spacing:0;min-height:32px;opacity:0;animation:fade-in .5s ease-out .75s forwards}
 .hero-sub .typer-cursor{display:inline-block;width:2px;height:1em;background:var(--cyan);vertical-align:-2px;margin-left:2px;animation:blink 1s steps(1) infinite}
@@ -784,7 +863,7 @@ button:hover .icon,a:hover .icon{transform:scale(1.1)}
 /* ---- liquid hero text (SVG displacement filter) ---- */
 .liquid{filter:url(#liquid);will-change:filter}
 .liquid-soft{filter:url(#liquid-soft)}
-.hero h1.hero-glitch{filter:url(#liquid-soft);transition:filter .4s}
+.hero h1.hero-glitch{transition:filter .4s}
 
 /* ---- icon path-draw on hover (animated stroke trace) ---- */
 .icon path,.icon line,.icon polyline,.icon polygon,.icon circle,.icon rect,.icon ellipse{stroke-dasharray:60;stroke-dashoffset:0;transition:stroke-dashoffset .55s var(--ease-out)}
@@ -1213,7 +1292,6 @@ const BODY = `
 <canvas id="particles"></canvas>
 <div id="trail" data-testid="cursor-trail"></div>
 <div id="spotlight"></div>
-<div class="scan-line"></div>
 <div class="corner tl"></div><div class="corner tr"></div>
 <div class="corner bl"></div><div class="corner br"></div>
 <div class="cursor-dot" data-testid="cursor-dot"></div>
@@ -1422,28 +1500,28 @@ function initShader(){
   const FS = ""+
     "precision mediump float;"+
     "uniform vec2 R;uniform float T;uniform vec2 M;"+
-    // hash + value noise
     "float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}"+
     "float n(vec2 p){vec2 i=floor(p),f=fract(p);float a=h(i),b=h(i+vec2(1,0)),c=h(i+vec2(0,1)),d=h(i+vec2(1,1));vec2 u=f*f*(3.-2.*f);return mix(a,b,u.x)+(c-a)*u.y*(1.-u.x)+(d-b)*u.x*u.y;}"+
-    "float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<5;i++){s+=a*n(p);p*=2.02;a*=.5;}return s;}"+
+    "float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<6;i++){s+=a*n(p);p*=2.01;a*=.48;}return s;}"+
     "void main(){"+
       "vec2 uv=(gl_FragCoord.xy-.5*R)/R.y;"+
       "vec2 mp=(M-.5*R)/R.y;"+
-      "float t=T*.04;"+
-      "vec2 q=vec2(fbm(uv*1.4+vec2(t,0.)),fbm(uv*1.4+vec2(0.,t*1.2)));"+
-      "vec2 r=vec2(fbm(uv*2.+q+vec2(1.7,9.2)+t),fbm(uv*2.+q+vec2(8.3,2.8)+t));"+
-      "float f=fbm(uv*1.6+r*1.2);"+
-      "float pull=exp(-3.*length(uv-mp));"+
-      "f=mix(f,1.,pull*.18);"+
-      // blue palette (deep -> bright)
-      "vec3 deep=vec3(0.0,0.05,0.18);"+
-      "vec3 mid =vec3(0.05,0.25,0.78);"+
-      "vec3 hi  =vec3(0.31,0.66,1.0);"+
-      "vec3 col=mix(deep,mid,smoothstep(.25,.6,f));"+
-      "col=mix(col,hi,smoothstep(.7,.95,f)*.8);"+
-      "col*=.9+.4*pull;"+
-      // subtle vignette
-      "col*=1.-.45*length(uv);"+
+      "float t=T*.025;"+
+      "vec2 q=vec2(fbm(uv*1.8+vec2(t*.7,sin(t*.3)*.4)),fbm(uv*1.8+vec2(cos(t*.4)*.3,t*.6)));"+
+      "vec2 r=vec2(fbm(uv*2.5+q+vec2(1.7,9.2)+t*.5),fbm(uv*2.5+q+vec2(8.3,2.8)+t*.4));"+
+      "float f=fbm(uv*2.+r*1.5+q*.5);"+
+      "float pull=exp(-2.5*length(uv-mp));"+
+      "f=mix(f,1.,pull*.22);"+
+      "vec3 deep=vec3(0.0,0.02,0.12);"+
+      "vec3 mid =vec3(0.02,0.18,0.58);"+
+      "vec3 hi  =vec3(0.25,0.55,1.0);"+
+      "vec3 peak=vec3(0.6,0.85,1.0);"+
+      "vec3 col=mix(deep,mid,smoothstep(.2,.5,f));"+
+      "col=mix(col,hi,smoothstep(.5,.75,f));"+
+      "col=mix(col,peak,smoothstep(.8,.98,f)*.5);"+
+      "col+=vec3(0.02,0.06,0.12)*pull;"+
+      "col*=.92+.35*pull;"+
+      "col*=1.-.4*length(uv);"+
       "gl_FragColor=vec4(col,1.);"+
     "}";
   function compile(t,s){ const sh=gl.createShader(t); gl.shaderSource(sh,s); gl.compileShader(sh); return sh; }
@@ -1468,7 +1546,6 @@ function initShader(){
   }
   size(); addEventListener("resize", size);
   const start = performance.now();
-  // cap FPS to ~30 to save battery
   let last = 0;
   function frame(t){
     if (t - last > 33){
@@ -1745,7 +1822,7 @@ async function renderLanding(){
   }));
 
   // marquee
-  const items = ["⚡ 10ms avg","🌍 300+ locations","🛡️ 99.99% uptime","🔑 Clerk Auth","🚀 Zero config","📦 Single file deploy","🌐 Global edge","💎 Crystalline DX"];
+  const items = ["10ms avg latency","300+ edge locations","99.99% uptime","Clerk Auth built-in","Zero config deploys","Single file deploy","Global edge network","Crystalline DX"];
   let mar = '<div class="marquee-track">';
   for (let i=0;i<2;i++) for (const it of items) mar += '<div class="marquee-item">'+it+'<span class="dot">·</span></div>';
   mar += '</div>';
@@ -2529,7 +2606,13 @@ function apiTable(){
 /* ---------- Page: Integrations ---------- */
 async function renderIntegrations(){
   const inner = h("div",{ class:"stagger" });
-  const cats = [
+  
+  // Try to fetch admin-managed content
+  let adminContent = null;
+  try { const r = await api("/api/content/integrations"); adminContent = r.data; } catch(e){}
+
+  // Default categories
+  const defaultCats = [
     ["Popular","star",[
       ["Stripe","SP","Accept payments and subscriptions globally",true,"payments"],
       ["GitHub","GH","Sync issues, PRs and releases automatically",true,"dev"],
@@ -2554,31 +2637,48 @@ async function renderIntegrations(){
       ["PostHog","PH","Product analytics and feature flags",true,"data"]
     ]]
   ];
-  let html = '<div class="caption">Connect</div><h2 class="h2">Integrations</h2><p class="text-dim mt-2 body" style="max-width:60ch">Wire up your favourite services in seconds. Configure once, fire from anywhere on the edge.</p>';
-  // Filter chips
-  html += '<div class="flex gap-2 flex-wrap mt-6" id="int-filter">'+
-    '<button class="pill cyan" data-fc="all">All</button>'+
-    '<button class="pill" data-fc="payments">Payments</button>'+
-    '<button class="pill" data-fc="dev">Dev tools</button>'+
-    '<button class="pill" data-fc="comms">Comms</button>'+
-    '<button class="pill" data-fc="ai">AI / ML</button>'+
-    '<button class="pill" data-fc="auth">Auth</button>'+
-    '<button class="pill" data-fc="data">Data</button>'+
-    '</div>';
-  for (const [title, ic, items] of cats){
-    html += '<h3 class="h4 mt-8" style="font-family:var(--font-display);font-weight:600">'+title+'</h3>';
-    html += '<div class="int-grid mt-3">';
-    for (const [name, abbr, desc, connected, cat] of items){
-      html += '<div class="int-card" data-int="'+cat+'" data-testid="int-card"><div class="head"><div class="ilogo">'+abbr+'</div><h4>'+name+'</h4></div>'+
-        '<div class="desc">'+desc+'</div>'+
-        '<div class="foot">'+
-        (connected?'<span class="pill green">● Connected</span>':'<span class="pill" style="color:var(--text-faint)">Available</span>')+
-        '<button class="btn btn-ghost btn-sm" data-testid="int-toggle">'+(connected?'Manage':'Connect')+' <svg class="icon" width="12" height="12"><use href="#i-arrow-right"/></svg></button>'+
-        '</div></div>';
-    }
-    html += '</div>';
+
+  let cats;
+  if (adminContent && typeof adminContent === "object" && !Array.isArray(adminContent) && Object.keys(adminContent).length > 0) {
+    // Admin content exists - transform it to display format
+    cats = Object.entries(adminContent).map(([title, items])=> [title, "zap", Array.isArray(items) ? items.map(it => [it.name||"—",it.abbr||"??",it.desc||"",!!it.connected,it.cat||"other"]) : []]);
+  } else if (adminContent !== null && adminContent !== undefined && typeof adminContent === "object" && Object.keys(adminContent).length === 0) {
+    cats = [];
+  } else {
+    cats = defaultCats;
   }
-  inner.innerHTML = html;
+
+  let htmlStr = '<div class="caption">Connect</div><h2 class="h2">Integrations</h2><p class="text-dim mt-2 body" style="max-width:60ch">Wire up your favourite services in seconds. Configure once, fire from anywhere on the edge.</p>';
+
+  if (cats.length === 0) {
+    htmlStr += '<div class="card mt-8" style="text-align:center;padding:80px 32px"><svg class="icon xl" style="color:var(--text-faint);margin-bottom:16px;width:48px;height:48px"><use href="#i-zap"/></svg><h3 class="h3" style="color:var(--text-dim)">No integrations available yet</h3><p class="text-faint mt-2 body">Integrations will appear here once configured by the admin.</p></div>';
+  } else {
+    // Filter chips
+    htmlStr += '<div class="flex gap-2 flex-wrap mt-6" id="int-filter">'+
+      '<button class="pill cyan" data-fc="all">All</button>'+
+      '<button class="pill" data-fc="payments">Payments</button>'+
+      '<button class="pill" data-fc="dev">Dev tools</button>'+
+      '<button class="pill" data-fc="comms">Comms</button>'+
+      '<button class="pill" data-fc="ai">AI / ML</button>'+
+      '<button class="pill" data-fc="auth">Auth</button>'+
+      '<button class="pill" data-fc="data">Data</button>'+
+      '</div>';
+    for (const [title, ic, items] of cats){
+      htmlStr += '<h3 class="h4 mt-8" style="font-family:var(--font-display);font-weight:600">'+escapeHtml(title)+'</h3>';
+      htmlStr += '<div class="int-grid mt-3">';
+      for (const [name, abbr, desc, connected, cat] of items){
+        htmlStr += '<div class="int-card" data-int="'+escapeHtml(cat)+'" data-testid="int-card"><div class="head"><div class="ilogo">'+escapeHtml(abbr)+'</div><h4>'+escapeHtml(name)+'</h4></div>'+
+          '<div class="desc">'+escapeHtml(desc)+'</div>'+
+          '<div class="foot">'+
+          (connected?'<span class="pill green">Connected</span>':'<span class="pill" style="color:var(--text-faint)">Available</span>')+
+          '<button class="btn btn-ghost btn-sm" data-testid="int-toggle">'+(connected?'Manage':'Connect')+' <svg class="icon" width="12" height="12"><use href="#i-arrow-right"/></svg></button>'+
+          '</div></div>';
+      }
+      htmlStr += '</div>';
+    }
+  }
+
+  inner.innerHTML = htmlStr;
   setTimeout(()=>{
     let cur = "all";
     $$("#int-filter [data-fc]").forEach(b=> b.onclick = ()=>{
@@ -2593,54 +2693,81 @@ async function renderIntegrations(){
 /* ---------- Page: Changelog ---------- */
 async function renderChangelog(){
   const inner = h("div",{ class:"stagger" });
-  const versions = [
-    ["v2.4.0","Jan 5, 2026","Blue refresh + new pages",[
-      ["Refined to a single-hue blue palette across all surfaces and charts.",true],
-      ["New /integrations page with 15 connectors and category filters.",true],
-      ["New /changelog page (this one) with semantic version timeline.",true],
-      ["Keyboard shortcuts modal (press ? anywhere).",true],
-      ["Customer logos strip on landing.",true],
-      ["Dropped Syne / IBM Plex for Space Grotesk + JetBrains Mono + Manrope.",false]
-    ]],
-    ["v2.3.0","Dec 18, 2025","Live activity + analytics",[
-      ["Real-time activity feed with filter tabs and search.",true],
-      ["Analytics: 30-day sparkline, donut by method, world dot map, response histogram.",true],
-      ["System health rings (CPU / Memory / KV Ops).",false]
-    ]],
-    ["v2.2.0","Nov 30, 2025","Settings overhaul",[
-      ["Six-tab settings (Account, Security, Notifications, Appearance, Developer, Danger).",true],
-      ["Live sliders: grid opacity, particle density, aurora intensity, font size.",true],
-      ["Sound effects (Web Audio synth, no files).",false],
-      ["Reduce-motion mode respected globally.",false]
-    ]],
-    ["v2.1.0","Nov 12, 2025","Command palette + cursor",[
-      ["Cmd+K command palette with arrow nav.",true],
-      ["Two-element magnetic cursor with hover states.",true],
-      ["Confetti burst on first API key.",true]
-    ]],
-    ["v2.0.0","Oct 28, 2025","Single-file rebuild",[
-      ["Entire app moved to one worker.js (HTML/CSS/JS embedded).",true],
-      ["Clerk JWT verification via JWKS, networkless cached.",true],
-      ["KV-backed user namespacing.",true]
-    ]]
-  ];
-  let html = '<div class="caption">Release notes</div><h2 class="h2">Changelog</h2><p class="text-dim mt-2 body" style="max-width:60ch">Every shipped update, since the rewrite.</p>';
-  html += '<div class="timeline mt-8">';
-  for (const [ver,date,title,changes] of versions){
-    html += '<div class="tl-item" data-testid="tl-item">'+
-      '<div class="ver"><span class="v">'+ver+'</span><span class="d">·</span><span class="d">'+date+'</span></div>'+
-      '<h4>'+title+'</h4>'+
-      '<ul class="changes">';
-    for (const [c, isFeat] of changes){
-      html += '<li class="'+(isFeat?"feat":"")+'">'+c+'</li>';
-    }
-    html += '</ul></div>';
+  // Try to fetch admin-managed content first
+  let adminContent = null;
+  try { const r = await api("/api/content/changelog"); adminContent = r.data; } catch(e){}
+  
+  let versions;
+  if (adminContent && Array.isArray(adminContent) && adminContent.length > 0) {
+    versions = adminContent;
+  } else if (adminContent !== null && adminContent !== undefined) {
+    // Admin has set content but it is empty
+    versions = [];
+  } else {
+    // No admin content set, use static defaults
+    versions = [
+      ["v2.4.0","Jan 5, 2026","Blue refresh + new pages",[
+        ["Refined to a single-hue blue palette across all surfaces and charts.",true],
+        ["New /integrations page with 15 connectors and category filters.",true],
+        ["New /changelog page (this one) with semantic version timeline.",true],
+        ["Keyboard shortcuts modal (press ? anywhere).",true],
+        ["Customer logos strip on landing.",true],
+        ["Dropped Syne / IBM Plex for Space Grotesk + JetBrains Mono + Manrope.",false]
+      ]],
+      ["v2.3.0","Dec 18, 2025","Live activity + analytics",[
+        ["Real-time activity feed with filter tabs and search.",true],
+        ["Analytics: 30-day sparkline, donut by method, world dot map, response histogram.",true],
+        ["System health rings (CPU / Memory / KV Ops).",false]
+      ]],
+      ["v2.2.0","Nov 30, 2025","Settings overhaul",[
+        ["Six-tab settings (Account, Security, Notifications, Appearance, Developer, Danger).",true],
+        ["Live sliders: grid opacity, particle density, aurora intensity, font size.",true],
+        ["Sound effects (Web Audio synth, no files).",false],
+        ["Reduce-motion mode respected globally.",false]
+      ]],
+      ["v2.1.0","Nov 12, 2025","Command palette + cursor",[
+        ["Cmd+K command palette with arrow nav.",true],
+        ["Two-element magnetic cursor with hover states.",true],
+        ["Confetti burst on first API key.",true]
+      ]],
+      ["v2.0.0","Oct 28, 2025","Single-file rebuild",[
+        ["Entire app moved to one worker.js (HTML/CSS/JS embedded).",true],
+        ["Clerk JWT verification via JWKS, networkless cached.",true],
+        ["KV-backed user namespacing.",true]
+      ]]
+    ];
   }
-  html += '</div>';
+
+  let htmlStr = '<div class="caption">Release notes</div><h2 class="h2">Changelog</h2><p class="text-dim mt-2 body" style="max-width:60ch">Every shipped update, since the rewrite.</p>';
+
+  if (versions.length === 0) {
+    htmlStr += '<div class="card mt-8" style="text-align:center;padding:80px 32px"><svg class="icon xl" style="color:var(--text-faint);margin-bottom:16px;width:48px;height:48px"><use href="#i-sparkles"/></svg><h3 class="h3" style="color:var(--text-dim)">No changelog entries yet</h3><p class="text-faint mt-2 body">Check back soon. Updates will appear here once published by the admin.</p></div>';
+  } else {
+    htmlStr += '<div class="timeline mt-8">';
+    for (const v of versions){
+      // Support both admin JSON format and static array format
+      const ver = v.ver || v[0] || "—";
+      const date = v.date || v[1] || "";
+      const title = v.title || v[2] || "";
+      const changes = v.changes || v[3] || [];
+      htmlStr += '<div class="tl-item" data-testid="tl-item">'+
+        '<div class="ver"><span class="v">'+escapeHtml(ver)+'</span><span class="d">.</span><span class="d">'+escapeHtml(date)+'</span></div>'+
+        '<h4>'+escapeHtml(title)+'</h4>'+
+        '<ul class="changes">';
+      for (const c of changes){
+        const text = c.text || c[0] || (typeof c === "string" ? c : "");
+        const isFeat = c.isFeat || c[1] || false;
+        htmlStr += '<li class="'+(isFeat?"feat":"")+'">'+escapeHtml(text)+'</li>';
+      }
+      htmlStr += '</ul></div>';
+    }
+    htmlStr += '</div>';
+  }
+
   // Subscribe block
-  html += '<div class="card mt-8" style="text-align:center;padding:48px"><h3 class="h3">Stay in the loop</h3><p class="text-dim mt-2 body" style="max-width:48ch;margin:8px auto 0">Get the next changelog drop in your inbox.</p>'+
+  htmlStr += '<div class="card mt-8" style="text-align:center;padding:48px"><h3 class="h3">Stay in the loop</h3><p class="text-dim mt-2 body" style="max-width:48ch;margin:8px auto 0">Get the next changelog drop in your inbox.</p>'+
     '<div class="flex gap-3 mt-4 justify-center"><input class="input" placeholder="you@domain.com" style="flex:0 1 320px;padding:12px 16px;border-radius:10px;background:var(--surface);border:1px solid var(--border);font-family:var(--font-body)" data-testid="changelog-email"/><button class="btn btn-primary" data-testid="changelog-subscribe">Subscribe <svg class="icon" width="14" height="14"><use href="#i-arrow-right"/></svg></button></div></div>';
-  inner.innerHTML = html;
+  inner.innerHTML = htmlStr;
   setTimeout(()=>{
     const sb = $("[data-testid=changelog-subscribe]");
     if (sb) sb.onclick = ()=> { const e = $("[data-testid=changelog-email]"); if (e && e.value.includes("@")){ toast("success","You're in. Watch your inbox."); e.value=""; } else toast("warning","Enter a valid email."); };
@@ -2705,7 +2832,7 @@ async function renderAdmOverview(body){
       '<div class="field"><label>Snapshot</label><input value="'+new Date().toISOString()+'" disabled/></div></div>'+
     '</div>'+
     '<div class="card mt-6"><h3><svg class="icon"><use href="#i-key"/></svg> Bootstrap admin</h3>'+
-      '<p class="text-dim body mt-2">Set <code class="mono">publicMetadata.role = "admin"</code> on a user in the Clerk dashboard to grant access. Or list emails in <code class="mono">[vars] ADMIN_EMAILS</code> in <code class="mono">wrangler.toml</code> as a fallback.</p>'+
+      '<p class="text-dim body mt-2">Set <code class="mono">ADMIN_USER_IDS</code> in <code class="mono">wrangler.toml</code> with your Clerk User IDs (comma-separated) to grant admin access. Or set <code class="mono">publicMetadata.role = "admin"</code> on a user in the Clerk dashboard.</p>'+
     '</div>';
   setTimeout(()=>{ $$("[data-stat-num]").forEach(el=>{ const v = +el.dataset.statNum; const suf = el.dataset.suffix||""; if (Number.isFinite(v)) counter(el, v, 1100, suf); else el.textContent = el.dataset.statText || "—"; }); }, 0);
 }
@@ -2890,14 +3017,34 @@ function openShortcuts(){
 
 async function renderStatus(){
   const inner = h("div",{ class:"stagger" });
-  const s = await api("/api/status").catch(()=>({services:[],incidents:[]}));
+  
+  // Try admin-managed status content
+  let adminContent = null;
+  try { const r = await api("/api/content/status"); adminContent = r.data; } catch(e){}
+  
+  let s;
+  if (adminContent && adminContent.services && Array.isArray(adminContent.services)) {
+    s = adminContent;
+  } else {
+    s = await api("/api/status").catch(()=>({services:[],incidents:[]}));
+  }
+  
+  if (!s.services || s.services.length === 0) {
+    inner.innerHTML =
+      '<div class="card" style="text-align:center;padding:80px 32px"><svg class="icon xl" style="color:var(--text-faint);margin-bottom:16px;width:48px;height:48px"><use href="#i-cpu"/></svg><h3 class="h3" style="color:var(--text-dim)">No status information available</h3><p class="text-faint mt-2 body">Service status will appear here once configured by the admin.</p></div>';
+    return dashShell(inner);
+  }
+  
   const ok = s.services.every(x=>x.status==="operational");
   inner.innerHTML =
-    '<div class="card" style="text-align:center;padding:60px"><h2 class="h1 gradient-text">'+(ok?"All Systems Operational":"Degraded")+'</h2><p class="text-dim mt-3 mono">Last checked '+fmt.rel(s.ts||Date.now())+'</p><div class="flex justify-center gap-3 mt-4"><span class="pill green">● Auto-refresh 60s</span><span class="pill cyan">Edge POP '+escapeHtml((state.user&&state.user.geoColo)||"???")+'</span></div></div>'+
+    '<div class="card" style="text-align:center;padding:60px"><h2 class="h1 gradient-text">'+(ok?"All Systems Operational":"Degraded")+'</h2><p class="text-dim mt-3 mono">Last checked '+fmt.rel(s.ts||Date.now())+'</p><div class="flex justify-center gap-3 mt-4"><span class="pill green">Auto-refresh 60s</span><span class="pill cyan">Edge POP '+escapeHtml((state.user&&state.user.geoColo)||"???")+'</span></div></div>'+
     '<div class="card mt-6"><h3>Services</h3><div class="stagger" style="display:flex;flex-direction:column;gap:8px;margin-top:12px">'+s.services.map(svc=>{
-      return '<div class="row"><div class="flex items-center gap-3"><span class="pill green">●</span><div><div style="font-weight:600">'+escapeHtml(svc.name)+'</div><div class="text-faint text-xs mono">'+svc.uptime.toFixed(2)+'% · '+svc.response+'ms</div></div></div><div class="uptime-bars" style="width:280px">'+Array.from({length:90},(_,i)=>{ const r = Math.random(); return '<i class="'+(r<0.005?"red":r<0.02?"amber":"")+'" title="Day -'+(89-i)+'"></i>'; }).join("")+'</div></div>';
+      const statusColor = svc.status === "operational" ? "green" : svc.status === "degraded" ? "amber" : "red";
+      return '<div class="row"><div class="flex items-center gap-3"><span class="pill '+statusColor+'">'+escapeHtml(svc.status)+'</span><div><div style="font-weight:600">'+escapeHtml(svc.name)+'</div><div class="text-faint text-xs mono">'+(svc.uptime != null ? svc.uptime.toFixed(2)+"%" : "—")+' . '+(svc.response != null ? svc.response+"ms" : "—")+'</div></div></div><div class="uptime-bars" style="width:280px">'+Array.from({length:90},(_,i)=>{ const r = Math.random(); return '<i class="'+(r<0.005?"red":r<0.02?"amber":"")+'" title="Day -'+(89-i)+'"></i>'; }).join("")+'</div></div>';
     }).join("")+'</div></div>'+
-    '<div class="card mt-6"><h3>Incident history</h3><div class="text-dim text-sm mt-2">No incidents in the last 90 days.</div></div>';
+    '<div class="card mt-6"><h3>Incident history</h3>'+
+    (s.incidents && s.incidents.length > 0 ? s.incidents.map(inc => '<div class="row mt-2"><div><div style="font-weight:600;color:var(--amber)">'+escapeHtml(inc.title||"Incident")+'</div><div class="text-dim text-xs">'+escapeHtml(inc.date||"")+" — "+escapeHtml(inc.description||"")+'</div></div></div>').join("") : '<div class="text-dim text-sm mt-2">No incidents in the last 90 days.</div>')+
+    '</div>';
   return dashShell(inner);
 }
 
@@ -2911,7 +3058,7 @@ function openDrawer(){
   $("#drawer-back").classList.add("open");
   $("#notif-drawer").classList.add("open");
   const body = $("#notif-body");
-  if (!state.notifications.length) body.innerHTML = '<div style="padding:60px 20px;text-align:center" class="text-faint"><svg class="icon xl" style="margin-bottom:12px"><use href="#i-bell"/></svg><div>You\\'re all caught up! 🎉</div></div>';
+  if (!state.notifications.length) body.innerHTML = '<div style="padding:60px 20px;text-align:center" class="text-faint"><svg class="icon xl" style="margin-bottom:12px;width:40px;height:40px"><use href="#i-bell"/></svg><div>You are all caught up!</div></div>';
   else body.innerHTML = state.notifications.map(n=>'<div class="notif '+(n.read?"":"unread")+'" data-testid="notif-item"><div class="nicon"><svg class="icon"><use href="#i-bell"/></svg></div><div><div class="msg">'+escapeHtml(n.message)+'</div><div class="time">'+fmt.rel(n.createdAt)+'</div></div></div>').join("");
 }
 function closeDrawer(){ $("#drawer-back").classList.remove("open"); $("#notif-drawer").classList.remove("open"); }
