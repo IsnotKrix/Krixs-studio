@@ -526,6 +526,7 @@ async function handleApi(req, env, url) {
         const notifications = await kvGet(env, `notifications:${id}`, []);
         const profile = await fetchClerkUser(env, id);
         return finish(json({ id, settings, keys, logs, notifications, profile }));
+        
       }
       if (method === "DELETE") {
         await env.KV.delete(`settings:${id}`);
@@ -1932,7 +1933,7 @@ async function renderLanding(){
     $$(".feature-card").forEach((el,i)=> onceVisible(el, ()=> { setTimeout(()=> el.classList.add("in"), i*80); }));
 
     // 3D tilt
-    $$(".feature-card").forEach(c=> { c.addEventListener("mousemove", tilt); c.addEventListener("mouseleave", untilt); });
+    bindTilt();
     
     // FAQ accordion
     $$(".faq-item").forEach(it=> { const q = it.querySelector(".faq-q"); if (q) q.onclick = ()=> it.classList.toggle("open"); });
