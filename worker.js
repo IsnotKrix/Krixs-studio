@@ -1962,19 +1962,19 @@ async function renderLanding(){
     // FAQ accordion
     $$(".faq-item").forEach(it=> { const q = it.querySelector(".faq-q"); if (q) q.onclick = ()=> it.classList.toggle("open"); });
 
-    // CTAs -> Clerk modal (fallback to dashboard if Clerk unavailable)
+    // CTAs -> Clerk modal (zabezpieczone powiadomieniami na ekranie)
     const open = ()=> { 
       if (state.clerk && state.clerk.openSignUp) {
         try { state.clerk.openSignUp({ afterSignUpUrl:"#/dashboard", afterSignInUrl:"#/dashboard" }); } 
-        catch(e) { navigate("/dashboard"); }
-      } else { navigate("/dashboard"); }
+        catch(e) { toast("error", "Błąd otwierania logowania"); }
+      } else { toast("error", "Brak klucza CLERK_PUBLISHABLE_KEY! Dodaj go do pliku .dev.vars"); }
     };
     const navSignin = document.getElementById("nav-signin");
     if (navSignin) navSignin.onclick = ()=> { 
       if (state.clerk && state.clerk.openSignIn) {
         try { state.clerk.openSignIn({ afterSignInUrl:"#/dashboard" }); } 
-        catch(e) { navigate("/dashboard"); }
-      } else { navigate("/dashboard"); }
+        catch(e) { toast("error", "Błąd otwierania logowania"); }
+      } else { toast("error", "Brak klucza CLERK_PUBLISHABLE_KEY! Dodaj go do pliku .dev.vars"); }
     };
     const navSignup = document.getElementById("nav-signup");
     if (navSignup) navSignup.onclick = open;
