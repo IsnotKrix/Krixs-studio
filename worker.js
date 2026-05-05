@@ -123,6 +123,33 @@ async function getUser(req, env) {
   return verifyClerkJwt(m[1], env);
 }
 
+function isAdmin(user, env) {
+  if (!user) return false;
+  // 1. Clerk publicMetadata.role === 'admin' (requires session token template
+  //    "public_metadata": "{{user.public_metadata}}" in Clerk dashboard)
+  const meta = user.public_metadata || (user.metadata && user.metadata.public) || {};
+  if (meta && meta.role === "admin") return true;
+  if (user.org_role === "admin") return true;
+  // 2. Bootstrap fallback: ADMIN_EMAILS env var (CSV) — useful before
+  //    publicMetadata is wired in Clerk dashboard.
+  const emails = String(env.ADMIN_EMAILS || "")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const e = (user.email || "").toLowerCase();
+  if (e && emails.includes(e)) return true;
+  return false;
+}
+
+async function fetchClerkUser(env, userId) {
+  if (!env.CLERK_SECRET_KEY) return null;
+  try {
+    const r = await fetch("https://api.clerk.com/v1/users/" + userId, {
+      headers: { authorization: "Bearer " + env.CLERK_SECRET_KEY },
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
 // ---------- KV helpers ----------
 async function kvGet(env, key, def = null) {
   const v = await env.KV.get(key, { type: "json" });
@@ -225,6 +252,7 @@ async function handleApi(req, env, url) {
     return finish(json({
       user: { id: userId, email: user.email, firstName: user.first_name, lastName: user.last_name, image: user.image_url },
       settings, keyCount: keys.length, geo: { country, colo },
+      isAdmin: isAdmin(user, env),
     }));
   }
 
@@ -351,6 +379,143 @@ async function handleApi(req, env, url) {
       return finish(json({ ok: true, notifications: n }));
     }
   }
+
+  // ===== Admin-only =====
+  if (path.startsWith("/api/admin/")) {
+    if (!isAdmin(user, env)) return finish(json({ error: "forbidden" }, { status: 403 }));
+
+    // List all users (scan KV `settings:` prefix)
+    if (path === "/api/admin/users" && method === "GET") {
+      const out = [];
+      let cursor = undefined;
+      // Cloudflare KV list
+      do {
+        const r = await env.KV.list({ prefix: "settings:", cursor, limit: 1000 });
+        for (const k of r.keys) {
+          const id = k.name.replace("settings:", "");
+          const settings = await kvGet(env, k.name, {});
+          const keys = (await kvGet(env, `keys:${id}`, [])) || [];
+          const logs = (await kvGet(env, `logs:${id}`, [])) || [];
+          // try to enrich from Clerk
+          let profile = await fetchClerkUser(env, id);
+          out.push({
+            id,
+            email: profile && profile.email_addresses && profile.email_addresses[0] ? profile.email_addresses[0].email_address : null,
+            firstName: profile ? profile.first_name : null,
+            lastName: profile ? profile.last_name : null,
+            imageUrl: profile ? profile.image_url : null,
+            createdAt: profile ? profile.created_at : null,
+            lastSignIn: profile ? profile.last_sign_in_at : null,
+            keyCount: keys.length,
+            logCount: logs.length,
+            theme: settings.theme,
+            isAdminMeta: !!(profile && profile.public_metadata && profile.public_metadata.role === "admin"),
+          });
+        }
+        cursor = r.list_complete ? null : r.cursor;
+      } while (cursor);
+      return finish(json({ users: out, total: out.length }));
+    }
+
+    // Single user dump
+    const um = path.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (um) {
+      const id = um[1];
+      if (method === "GET") {
+        const settings = await kvGet(env, `settings:${id}`, null);
+        const keys = await kvGet(env, `keys:${id}`, []);
+        const logs = await kvGet(env, `logs:${id}`, []);
+        const notifications = await kvGet(env, `notifications:${id}`, []);
+        const profile = await fetchClerkUser(env, id);
+        return finish(json({ id, settings, keys, logs, notifications, profile }));
+      }
+      if (method === "DELETE") {
+        await env.KV.delete(`settings:${id}`);
+        await env.KV.delete(`keys:${id}`);
+        await env.KV.delete(`logs:${id}`);
+        await env.KV.delete(`notifications:${id}`);
+        return finish(json({ deleted: true }));
+      }
+    }
+
+    // Patch user settings
+    const usm = path.match(/^\/api\/admin\/users\/([^/]+)\/settings$/);
+    if (usm && method === "PUT") {
+      const body = await req.json().catch(() => ({}));
+      await kvPut(env, `settings:${usm[1]}`, body);
+      return finish(json({ ok: true, settings: body }));
+    }
+
+    // Revoke a key on a user's behalf
+    const ukm = path.match(/^\/api\/admin\/users\/([^/]+)\/keys\/([^/]+)$/);
+    if (ukm && method === "DELETE") {
+      const list = (await kvGet(env, `keys:${ukm[1]}`, [])) || [];
+      const next = list.filter((x) => x.id !== ukm[2]);
+      await kvPut(env, `keys:${ukm[1]}`, next);
+      return finish(json({ deleted: true }));
+    }
+
+    // Broadcast notification to all users
+    if (path === "/api/admin/broadcast" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const message = String(body.message || "Broadcast").slice(0, 280);
+      const type = body.type || "info";
+      let count = 0, cursor = undefined;
+      do {
+        const r = await env.KV.list({ prefix: "settings:", cursor, limit: 1000 });
+        for (const k of r.keys) {
+          const id = k.name.replace("settings:", "");
+          await pushNotification(env, id, type, message);
+          count++;
+        }
+        cursor = r.list_complete ? null : r.cursor;
+      } while (cursor);
+      return finish(json({ ok: true, count }));
+    }
+
+    // Global content (changelog / integrations / status)
+    const cm = path.match(/^\/api\/admin\/content\/(changelog|integrations|status)$/);
+    if (cm) {
+      const ckey = `content:${cm[1]}`;
+      if (method === "GET") {
+        const v = await kvGet(env, ckey, null);
+        return finish(json({ key: cm[1], data: v }));
+      }
+      if (method === "PUT") {
+        const body = await req.json().catch(() => ({}));
+        await kvPut(env, ckey, body);
+        return finish(json({ ok: true, data: body }));
+      }
+    }
+
+    // Global stats
+    if (path === "/api/admin/stats" && method === "GET") {
+      let users = 0, keys = 0, logs = 0, cursor = undefined;
+      do {
+        const r = await env.KV.list({ prefix: "settings:", cursor, limit: 1000 });
+        users += r.keys.length;
+        cursor = r.list_complete ? null : r.cursor;
+      } while (cursor);
+      cursor = undefined;
+      do {
+        const r = await env.KV.list({ prefix: "keys:", cursor, limit: 1000 });
+        for (const k of r.keys) { const arr = await kvGet(env, k.name, []); keys += (arr || []).length; }
+        cursor = r.list_complete ? null : r.cursor;
+      } while (cursor);
+      cursor = undefined;
+      do {
+        const r = await env.KV.list({ prefix: "logs:", cursor, limit: 1000 });
+        for (const k of r.keys) { const arr = await kvGet(env, k.name, []); logs += (arr || []).length; }
+        cursor = r.list_complete ? null : r.cursor;
+      } while (cursor);
+      return finish(json({ users, keys, logs, ts: now() }));
+    }
+
+    return finish(json({ error: "not found" }, { status: 404 }));
+  }
+
+  // /api/me also exposes whether the caller is an admin so the SPA can hide
+  // the sidebar entry without an extra round-trip.
 
   return finish(json({ error: "not found" }, { status: 404 }));
 }
@@ -491,6 +656,7 @@ input,select,textarea{font:inherit;color:inherit;background:transparent;border:0
 
 /* ---- background system ---- */
 #bg-layers{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+#shader-bg{position:absolute;inset:0;width:100%;height:100%;opacity:.55;mix-blend-mode:screen}
 .grid-bg{position:absolute;inset:-60px;background-image:
   linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),
   linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
@@ -519,8 +685,11 @@ input,select,textarea{font:inherit;color:inherit;background:transparent;border:0
   html,body,*{cursor:none !important}
 }
 .cursor-dot,.cursor-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:99999;transform:translate(-50%,-50%);will-change:transform}
-.cursor-dot{width:6px;height:6px;background:var(--cyan);border-radius:50%}
-.cursor-ring{width:32px;height:32px;border:1px solid var(--cyan);border-radius:50%;transition:width .25s var(--ease-spring),height .25s var(--ease-spring),background .25s,border-color .25s,transform .15s var(--ease-spring)}
+.cursor-dot{width:6px;height:6px;background:var(--blue-bright);border-radius:50%;box-shadow:0 0 12px var(--blue-glow)}
+.cursor-ring{width:32px;height:32px;border:1px solid var(--blue-bright);border-radius:50%;transition:width .25s var(--ease-spring),height .25s var(--ease-spring),background .25s,border-color .25s,transform .15s var(--ease-spring)}
+#trail{position:fixed;inset:0;pointer-events:none;z-index:99998}
+.trail-dot{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--blue-bright);transform:translate(-50%,-50%);pointer-events:none;animation:trail-fade .55s linear forwards;mix-blend-mode:screen;filter:blur(1px)}
+@keyframes trail-fade{from{opacity:.5;transform:translate(-50%,-50%) scale(1)}to{opacity:0;transform:translate(-50%,-50%) scale(.2)}}
 body.cur-link .cursor-ring{width:48px;height:48px;border-color:transparent;background:var(--grad-primary);opacity:.25;transform:translate(-50%,-50%) rotate(45deg)}
 body.cur-btn .cursor-dot{opacity:0}
 body.cur-btn .cursor-ring{width:40px;height:40px;background:var(--grad-primary);border-color:transparent;opacity:.7}
@@ -612,7 +781,39 @@ button:hover .icon,a:hover .icon{transform:scale(1.1)}
 .scroll-chev{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);color:var(--text-faint);animation:bounce 2s ease-in-out infinite;font-size:24px}
 @keyframes bounce{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,8px)}}
 
-/* ---- glitch (disabled in modern blue theme) ---- */
+/* ---- liquid hero text (SVG displacement filter) ---- */
+.liquid{filter:url(#liquid);will-change:filter}
+.liquid-soft{filter:url(#liquid-soft)}
+.hero h1.hero-glitch{filter:url(#liquid-soft);transition:filter .4s}
+
+/* ---- icon path-draw on hover (animated stroke trace) ---- */
+.icon path,.icon line,.icon polyline,.icon polygon,.icon circle,.icon rect,.icon ellipse{stroke-dasharray:60;stroke-dashoffset:0;transition:stroke-dashoffset .55s var(--ease-out)}
+.feature-card:hover .icon path,.feature-card:hover .icon line,.feature-card:hover .icon polyline,.feature-card:hover .icon polygon,
+.qa:hover .icon path,.qa:hover .icon line,.qa:hover .icon polyline,
+.int-card:hover .icon path,.int-card:hover .icon line,
+.btn-icon:hover .icon path,.btn-icon:hover .icon line,
+.icon-wrap:hover .icon path,.icon-wrap:hover .icon line{
+  animation:icon-draw .8s var(--ease-out)
+}
+@keyframes icon-draw{0%{stroke-dashoffset:60}100%{stroke-dashoffset:0}}
+
+/* ---- 3D tilt helper (parent declares perspective) ---- */
+.tilt{transition:transform .35s var(--ease-spring),box-shadow .35s var(--ease-out);transform-style:preserve-3d;will-change:transform}
+.tilt::after{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(400px circle at var(--tx,50%) var(--ty,50%),rgba(120,180,255,.07),transparent 60%);pointer-events:none;opacity:0;transition:opacity .3s}
+.tilt:hover::after{opacity:1}
+
+/* ---- animated gradient border ---- */
+@property --bg-rot{syntax:'<angle>';inherits:false;initial-value:0deg}
+@keyframes rot{to{--bg-rot:360deg}}
+.grad-ring{position:relative;border-radius:inherit}
+.grad-ring::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1px;background:conic-gradient(from var(--bg-rot,0deg),transparent 0,var(--blue-bright) 40%,transparent 60%,var(--blue-deep) 90%,transparent 100%);-webkit-mask:linear-gradient(#000,#000) content-box,linear-gradient(#000,#000);-webkit-mask-composite:xor;mask-composite:exclude;animation:rot 6s linear infinite;pointer-events:none;opacity:.6}
+
+/* ---- live ripple dot ---- */
+.ripple-dot{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+.ripple-dot::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid var(--green);animation:rdot 1.6s ease-out infinite}
+@keyframes rdot{0%{transform:scale(1);opacity:.7}100%{transform:scale(3);opacity:0}}
+
+
 .glitch{animation:none}
 @keyframes glitch{
   0%,86%,100%{clip-path:none;transform:none}
@@ -1004,11 +1205,13 @@ footer{padding:80px 0 48px;border-top:1px solid var(--border);background:var(--v
 const BODY = `
 <div id="bg-layers">
   <div class="grid-bg"></div>
+  <canvas id="shader-bg"></canvas>
   <div class="aurora-blob aurora-blob-1"></div>
   <div class="aurora-blob aurora-blob-2"></div>
   <div class="aurora-blob aurora-blob-3"></div>
 </div>
 <canvas id="particles"></canvas>
+<div id="trail" data-testid="cursor-trail"></div>
 <div id="spotlight"></div>
 <div class="scan-line"></div>
 <div class="corner tl"></div><div class="corner tr"></div>
@@ -1032,6 +1235,26 @@ const BODY = `
 </div>
 <div id="toasts" data-testid="toasts"></div>
 <nav class="mob-nav" id="mob-nav" data-testid="mob-nav"></nav>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="liquid">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2" seed="3">
+        <animate attributeName="baseFrequency" dur="22s" values="0.012 0.018;0.020 0.010;0.012 0.018" repeatCount="indefinite"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" scale="14"/>
+    </filter>
+    <filter id="liquid-soft">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7">
+        <animate attributeName="baseFrequency" dur="28s" values="0.008 0.012;0.014 0.006;0.008 0.012" repeatCount="indefinite"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" scale="6"/>
+    </filter>
+    <filter id="goo">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 24 -10"/>
+    </filter>
+  </defs>
+</svg>
 `;
 
 
@@ -1086,7 +1309,8 @@ const state = {
   reduceMotion: false,
   sessionStart: Date.now(),
   loadedClerk: false,
-  clerk: null
+  clerk: null,
+  isAdmin: false
 };
 
 /* ---------- API fetch with Clerk token ---------- */
@@ -1160,15 +1384,24 @@ function playBeep(freq, ms){
   o.stop(ctx.currentTime + (ms/1000));
 }
 
-/* ---------- Custom cursor ---------- */
+/* ---------- Custom cursor + trail ---------- */
 function initCursor(){
   if (matchMedia("(hover:none),(pointer:coarse)").matches) return;
-  const dot = $(".cursor-dot"); const ring = $(".cursor-ring");
+  const dot = $(".cursor-dot"); const ring = $(".cursor-ring"); const trail = $("#trail");
   let mx=window.innerWidth/2, my=window.innerHeight/2, rx=mx, ry=my;
+  let lastTrail = 0;
   document.addEventListener("mousemove", (e)=>{ mx=e.clientX; my=e.clientY;
     document.documentElement.style.setProperty("--mx", mx+"px");
     document.documentElement.style.setProperty("--my", my+"px");
     dot.style.transform = "translate("+mx+"px,"+my+"px) translate(-50%,-50%)";
+    // trail (throttled)
+    const t = performance.now();
+    if (trail && t - lastTrail > 28){
+      lastTrail = t;
+      const d = document.createElement("div"); d.className = "trail-dot";
+      d.style.left = mx+"px"; d.style.top = my+"px";
+      trail.appendChild(d); setTimeout(()=> d.remove(), 600);
+    }
   });
   function loop(){ rx += (mx-rx)*0.18; ry += (my-ry)*0.18; ring.style.transform = "translate("+rx+"px,"+ry+"px) translate(-50%,-50%)"; requestAnimationFrame(loop); } loop();
   document.addEventListener("mousedown", ()=> document.body.classList.add("cur-down"));
@@ -1177,6 +1410,101 @@ function initCursor(){
     const t = e.target.closest("a,button,.btn,[data-cur=link]");
     document.body.classList.toggle("cur-link", !!(t && t.matches("a,[data-cur=link]")));
     document.body.classList.toggle("cur-btn",  !!(t && t.matches("button,.btn")));
+  });
+}
+
+/* ---------- WebGL flow-field shader background ---------- */
+function initShader(){
+  const c = document.getElementById("shader-bg"); if (!c) return null;
+  const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+  if (!gl){ c.style.display = "none"; return null; }
+  const VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
+  const FS = ""+
+    "precision mediump float;"+
+    "uniform vec2 R;uniform float T;uniform vec2 M;"+
+    // hash + value noise
+    "float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}"+
+    "float n(vec2 p){vec2 i=floor(p),f=fract(p);float a=h(i),b=h(i+vec2(1,0)),c=h(i+vec2(0,1)),d=h(i+vec2(1,1));vec2 u=f*f*(3.-2.*f);return mix(a,b,u.x)+(c-a)*u.y*(1.-u.x)+(d-b)*u.x*u.y;}"+
+    "float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<5;i++){s+=a*n(p);p*=2.02;a*=.5;}return s;}"+
+    "void main(){"+
+      "vec2 uv=(gl_FragCoord.xy-.5*R)/R.y;"+
+      "vec2 mp=(M-.5*R)/R.y;"+
+      "float t=T*.04;"+
+      "vec2 q=vec2(fbm(uv*1.4+vec2(t,0.)),fbm(uv*1.4+vec2(0.,t*1.2)));"+
+      "vec2 r=vec2(fbm(uv*2.+q+vec2(1.7,9.2)+t),fbm(uv*2.+q+vec2(8.3,2.8)+t));"+
+      "float f=fbm(uv*1.6+r*1.2);"+
+      "float pull=exp(-3.*length(uv-mp));"+
+      "f=mix(f,1.,pull*.18);"+
+      // blue palette (deep -> bright)
+      "vec3 deep=vec3(0.0,0.05,0.18);"+
+      "vec3 mid =vec3(0.05,0.25,0.78);"+
+      "vec3 hi  =vec3(0.31,0.66,1.0);"+
+      "vec3 col=mix(deep,mid,smoothstep(.25,.6,f));"+
+      "col=mix(col,hi,smoothstep(.7,.95,f)*.8);"+
+      "col*=.9+.4*pull;"+
+      // subtle vignette
+      "col*=1.-.45*length(uv);"+
+      "gl_FragColor=vec4(col,1.);"+
+    "}";
+  function compile(t,s){ const sh=gl.createShader(t); gl.shaderSource(sh,s); gl.compileShader(sh); return sh; }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)){ c.style.display="none"; return null; }
+  gl.useProgram(prog);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+  const a = gl.getAttribLocation(prog,"p"); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a,2,gl.FLOAT,false,0,0);
+  const uR = gl.getUniformLocation(prog,"R");
+  const uT = gl.getUniformLocation(prog,"T");
+  const uM = gl.getUniformLocation(prog,"M");
+  let mx = innerWidth/2, my = innerHeight/2;
+  addEventListener("mousemove", e=>{ mx = e.clientX; my = innerHeight - e.clientY; });
+  function size(){
+    const s = Math.min(1, devicePixelRatio*0.6);
+    c.width = Math.floor(innerWidth*s); c.height = Math.floor(innerHeight*s);
+    gl.viewport(0,0,c.width,c.height);
+  }
+  size(); addEventListener("resize", size);
+  const start = performance.now();
+  // cap FPS to ~30 to save battery
+  let last = 0;
+  function frame(t){
+    if (t - last > 33){
+      last = t;
+      gl.uniform2f(uR, c.width, c.height);
+      gl.uniform1f(uT, (t-start)/1000);
+      const k = c.width/innerWidth;
+      gl.uniform2f(uM, mx*k, my*k);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  return { ok:true };
+}
+
+/* ---------- 3D parallax tilt (delegate) ---------- */
+function bindTilt(scope){
+  scope = scope || document;
+  const sel = ".feature-card, .stat-card, .qa, .int-card, .price-card, .step, .testi-card, .card.tiltable";
+  scope.querySelectorAll(sel).forEach(el=>{
+    if (el.__tilt) return; el.__tilt = true;
+    el.style.transformStyle = "preserve-3d";
+    el.style.willChange = "transform";
+    el.classList.add("tilt");
+    el.addEventListener("mousemove",(e)=>{
+      const r = el.getBoundingClientRect();
+      const px = (e.clientX - r.left) / r.width;
+      const py = (e.clientY - r.top) / r.height;
+      el.style.setProperty("--tx", (px*100)+"%");
+      el.style.setProperty("--ty", (py*100)+"%");
+      const max = 7;
+      const rx = (0.5-py)*max; const ry = (px-0.5)*max;
+      el.style.transform = "perspective(900px) rotateX("+rx+"deg) rotateY("+ry+"deg) translateY(-3px)";
+    });
+    el.addEventListener("mouseleave",()=>{ el.style.transform = ""; });
   });
 }
 
@@ -1251,11 +1579,11 @@ async function loadClerk(){
 }
 
 /* ---------- Router ---------- */
-const routes = ["/", "/dashboard", "/profile", "/keys", "/analytics", "/activity", "/settings", "/docs", "/status", "/integrations", "/changelog"];
+const routes = ["/", "/dashboard", "/profile", "/keys", "/analytics", "/activity", "/settings", "/docs", "/status", "/integrations", "/changelog", "/admin"];
 function navigate(p){ if (location.hash !== "#"+p) location.hash = "#"+p; else render(); }
 addEventListener("hashchange", ()=>{ state.route = location.hash.slice(1) || "/"; render(); });
 
-const PROTECTED = ["/dashboard","/profile","/keys","/analytics","/activity","/settings"];
+const PROTECTED = ["/dashboard","/profile","/keys","/analytics","/activity","/settings","/admin"];
 async function render(){
   const app = document.getElementById("app");
   const cur = app.firstElementChild;
@@ -1265,12 +1593,19 @@ async function render(){
     state.route = "/"; location.hash = "#/";
     return;
   }
+  if (r === "/admin" && !state.isAdmin){
+    toast("error","Admin access required.");
+    state.route = "/dashboard"; location.hash = "#/dashboard";
+    return;
+  }
   const next = await viewFor(r);
   if (cur){ cur.classList.add("out"); await new Promise(rz=> setTimeout(rz, 180)); cur.remove(); }
   app.appendChild(next);
   setTimeout(()=> next.classList.remove("out"), 0);
   // active nav
   $$("[data-nav]").forEach(a=> a.classList.toggle("active", a.dataset.nav === r));
+  // bind 3D tilt + magnetic on whatever was just rendered
+  setTimeout(()=>{ bindTilt(next); next.querySelectorAll(".btn-primary").forEach(magnetize); }, 60);
   window.scrollTo({ top:0, behavior:"instant" });
 }
 async function viewFor(r){
@@ -1287,6 +1622,7 @@ async function viewFor(r){
   else if (r === "/status")    wrap.appendChild(await renderStatus());
   else if (r === "/integrations") wrap.appendChild(await renderIntegrations());
   else if (r === "/changelog") wrap.appendChild(await renderChangelog());
+  else if (r === "/admin")     wrap.appendChild(await renderAdmin());
   else                          wrap.appendChild(notFound());
   return wrap;
 }
@@ -1333,6 +1669,7 @@ function dashShell(content){
     ["/changelog","i-sparkles","Changelog"],
     ["/status","i-cpu","Status"]
   ];
+  if (state.isAdmin) links.push(["/admin","i-shield","Admin"]);
   const u = state.user || {};
   const initials = ((u.firstName||u.email||"U").charAt(0) + (u.lastName ? u.lastName.charAt(0):"")).toUpperCase();
   const sb = h("aside",{ class:"sidebar", "data-testid":"sidebar" });
@@ -2311,6 +2648,214 @@ async function renderChangelog(){
   return dashShell(inner);
 }
 
+/* ---------- Page: Admin ---------- */
+async function renderAdmin(){
+  const inner = h("div",{ class:"stagger" });
+  inner.innerHTML =
+    '<div class="flex justify-between items-center" style="flex-wrap:wrap;gap:16px">'+
+      '<div><div class="caption" style="color:var(--blue-bright)">Restricted area</div><h2 class="h2 flex items-center gap-3"><svg class="icon xl" style="color:var(--blue-bright)"><use href="#i-shield"/></svg> Admin Panel</h2><p class="text-dim mt-2 body" style="max-width:60ch">Manage users, broadcast announcements and edit global content.</p></div>'+
+      '<span class="ripple-dot" data-testid="admin-live"></span>'+
+    '</div>'+
+    '<div class="tabs mt-6" id="adm-tabs">'+
+      '<button class="tab active" data-t="overview" data-testid="adm-tab-overview">Overview</button>'+
+      '<button class="tab" data-t="users" data-testid="adm-tab-users">Users</button>'+
+      '<button class="tab" data-t="broadcast" data-testid="adm-tab-broadcast">Broadcast</button>'+
+      '<button class="tab" data-t="changelog" data-testid="adm-tab-changelog">Changelog</button>'+
+      '<button class="tab" data-t="integrations" data-testid="adm-tab-integrations">Integrations</button>'+
+      '<button class="tab" data-t="status" data-testid="adm-tab-status">Status</button>'+
+      '<span class="tab-ind" id="adm-ind"></span>'+
+    '</div>'+
+    '<div id="adm-body" class="mt-2"></div>';
+  setTimeout(async ()=>{
+    const ind = $("#adm-ind");
+    function moveInd(btn){ const r = btn.getBoundingClientRect(); const pr = btn.parentElement.getBoundingClientRect(); ind.style.left = (r.left-pr.left)+"px"; ind.style.width = r.width+"px"; }
+    async function pick(t){
+      $$("#adm-tabs .tab").forEach(b=> b.classList.toggle("active", b.dataset.t === t));
+      moveInd(document.querySelector("#adm-tabs [data-t="+t+"]"));
+      const body = $("#adm-body");
+      body.innerHTML = '<div class="card"><div class="skel" style="height:80px"></div></div>';
+      if (t === "overview")     await renderAdmOverview(body);
+      else if (t === "users")   await renderAdmUsers(body);
+      else if (t === "broadcast") renderAdmBroadcast(body);
+      else if (t === "changelog") await renderAdmContent(body, "changelog");
+      else if (t === "integrations") await renderAdmContent(body, "integrations");
+      else if (t === "status")  await renderAdmContent(body, "status");
+    }
+    $$("#adm-tabs .tab").forEach(b=> b.onclick = ()=> pick(b.dataset.t));
+    pick("overview");
+    addEventListener("resize", ()=>{ const a = document.querySelector("#adm-tabs .tab.active"); if (a) moveInd(a); });
+  }, 30);
+  return dashShell(inner);
+}
+
+async function renderAdmOverview(body){
+  let stats = {};
+  try{ stats = await api("/api/admin/stats"); } catch(e){ stats = { error:e.message }; }
+  body.innerHTML =
+    '<div class="stats-row">'+
+      sCard("Users", stats.users || 0, "Tracked", "up", "i-user")+
+      sCard("API Keys", stats.keys || 0, "Provisioned", "up", "i-key")+
+      sCard("Log Events", stats.logs || 0, "Last 100/user", "up", "i-activity")+
+      sCard("Edge", "GLOBAL", "Cloudflare", "up", "i-globe", true)+
+    '</div>'+
+    '<div class="card mt-6"><h3><svg class="icon"><use href="#i-shield"/></svg> System info</h3>'+
+      '<div class="form-grid mt-3"><div class="field"><label>App URL</label><input value="'+escapeHtml(window.__APP_URL__||location.origin)+'" disabled/></div>'+
+      '<div class="field"><label>Clerk publishable</label><input value="'+escapeHtml((window.__CLERK_PK__||"").slice(0,18)+"…")+'" disabled/></div>'+
+      '<div class="field"><label>Region</label><input value="Cloudflare Global Edge" disabled/></div>'+
+      '<div class="field"><label>Snapshot</label><input value="'+new Date().toISOString()+'" disabled/></div></div>'+
+    '</div>'+
+    '<div class="card mt-6"><h3><svg class="icon"><use href="#i-key"/></svg> Bootstrap admin</h3>'+
+      '<p class="text-dim body mt-2">Set <code class="mono">publicMetadata.role = "admin"</code> on a user in the Clerk dashboard to grant access. Or list emails in <code class="mono">[vars] ADMIN_EMAILS</code> in <code class="mono">wrangler.toml</code> as a fallback.</p>'+
+    '</div>';
+  setTimeout(()=>{ $$("[data-stat-num]").forEach(el=>{ const v = +el.dataset.statNum; const suf = el.dataset.suffix||""; if (Number.isFinite(v)) counter(el, v, 1100, suf); else el.textContent = el.dataset.statText || "—"; }); }, 0);
+}
+
+async function renderAdmUsers(body){
+  let data;
+  try{ data = await api("/api/admin/users"); } catch(e){ body.innerHTML = '<div class="card text-red">'+escapeHtml(e.message)+'</div>'; return; }
+  const users = data.users || [];
+  body.innerHTML =
+    '<div class="card"><div class="flex justify-between items-center mb-4 flex-wrap gap-3">'+
+      '<h3 style="margin:0">Users <span class="text-faint" style="font-size:13px">· '+users.length+' total</span></h3>'+
+      '<input id="adm-user-search" placeholder="Filter…" data-testid="adm-user-search" style="padding:8px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--border);font-family:var(--font-body)"/>'+
+    '</div>'+
+    '<div style="overflow-x:auto"><table id="adm-users-tbl" data-testid="adm-users-tbl" style="width:100%;border-collapse:collapse">'+
+      '<thead><tr style="text-align:left">'+
+        ['User','Email','Created','Last sign-in','Keys','Logs','Role',''].map(t=>'<th style="padding:12px;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--text-faint);border-bottom:1px solid var(--border)">'+t+'</th>').join("")+
+      '</tr></thead><tbody>'+
+      users.map(u=>{
+        const initials = ((u.firstName||u.email||"U").charAt(0) + (u.lastName ? u.lastName.charAt(0):"")).toUpperCase();
+        return '<tr data-uid="'+u.id+'" data-q="'+escapeHtml(((u.email||"")+" "+(u.firstName||"")+" "+(u.lastName||"")).toLowerCase())+'">'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)"><div class="flex items-center gap-3"><div class="avatar">'+escapeHtml(initials)+'</div><div><div style="font-weight:600">'+escapeHtml(((u.firstName||"")+" "+(u.lastName||"")).trim()||"—")+'</div><div class="text-faint text-xs mono">'+escapeHtml(u.id.slice(0,12))+'…</div></div></div></td>'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)" class="mono text-sm">'+escapeHtml(u.email||"—")+'</td>'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)" class="text-faint text-xs">'+(u.createdAt?new Date(u.createdAt).toISOString().slice(0,10):"—")+'</td>'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)" class="text-faint text-xs">'+(u.lastSignIn?fmt.rel(u.lastSignIn):"never")+'</td>'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)" class="mono">'+u.keyCount+'</td>'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)" class="mono">'+u.logCount+'</td>'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)">'+(u.isAdminMeta?'<span class="pill cyan">admin</span>':'<span class="pill">user</span>')+'</td>'+
+          '<td style="padding:12px;border-bottom:1px solid var(--border)"><div class="flex gap-1"><button class="btn-icon" data-act="view" data-testid="user-view" aria-label="view"><svg class="icon"><use href="#i-eye"/></svg></button><button class="btn-icon" data-act="edit" data-testid="user-edit" aria-label="edit"><svg class="icon"><use href="#i-edit"/></svg></button><button class="btn-icon" data-act="delete" data-testid="user-delete" aria-label="delete"><svg class="icon"><use href="#i-trash"/></svg></button></div></td>'+
+        '</tr>';
+      }).join("")+
+      '</tbody></table>'+
+      (users.length ? '' : '<div class="text-faint" style="text-align:center;padding:60px">No users yet — they appear here once anyone signs in.</div>')+
+    '</div></div>';
+  setTimeout(()=>{
+    const tb = $("#adm-users-tbl tbody");
+    $("#adm-user-search").addEventListener("input",(e)=>{
+      const q = e.target.value.toLowerCase();
+      tb.querySelectorAll("tr").forEach(r=>{ r.style.display = !q || r.dataset.q.includes(q) ? "" : "none"; });
+    });
+    tb.addEventListener("click", async (e)=>{
+      const btn = e.target.closest("[data-act]"); if (!btn) return;
+      const tr = btn.closest("tr"); const uid = tr.dataset.uid;
+      if (btn.dataset.act === "view"){
+        try{ const data = await api("/api/admin/users/"+uid); openUserModal(data); }
+        catch(err){ toast("error", err.message); }
+      } else if (btn.dataset.act === "edit"){
+        try{ const data = await api("/api/admin/users/"+uid); openUserEdit(data); }
+        catch(err){ toast("error", err.message); }
+      } else if (btn.dataset.act === "delete"){
+        if (!confirm("Permanently delete all KV data for this user? This cannot be undone.")) return;
+        try{ await api("/api/admin/users/"+uid, { method:"DELETE" }); tr.style.transition="all .3s"; tr.style.opacity=0; setTimeout(()=> tr.remove(), 300); toast("success","User purged."); }
+        catch(err){ toast("error", err.message); }
+      }
+    });
+  }, 0);
+}
+
+function openUserModal(data){
+  const back = h("div",{ class:"cmd-back open", "data-testid":"user-modal" });
+  const summary = { settings:data.settings, keyCount:(data.keys||[]).length, logCount:(data.logs||[]).length, notifications:(data.notifications||[]).length, profile: data.profile ? { email:data.profile.email_addresses && data.profile.email_addresses[0] && data.profile.email_addresses[0].email_address, name:((data.profile.first_name||"")+" "+(data.profile.last_name||"")).trim(), public_metadata:data.profile.public_metadata } : null };
+  back.innerHTML = '<div class="cmd" style="width:min(720px,92vw);padding:28px;max-height:84vh;overflow-y:auto"><div class="flex justify-between items-center mb-4"><div><div class="caption">Inspect</div><h3 class="h3">User <span class="mono text-faint" style="font-size:14px">'+escapeHtml(data.id.slice(0,16))+'…</span></h3></div><button class="btn-icon" id="um-close" data-testid="um-close"><svg class="icon"><use href="#i-x"/></svg></button></div>'+
+    '<div class="code">'+escapeHtml(JSON.stringify(summary,null,2))+'</div>'+
+    '<h4 class="mt-6">Keys <span class="text-faint">('+((data.keys||[]).length)+')</span></h4>'+
+    '<div class="mt-3" style="display:flex;flex-direction:column;gap:6px">'+(data.keys||[]).map(k=>'<div class="row"><div><div style="font-weight:600">'+escapeHtml(k.name)+'</div><div class="mono text-faint text-xs">'+escapeHtml(k.masked||"—")+'</div></div><button class="btn btn-ghost btn-sm" data-revoke="'+escapeHtml(k.id)+'" data-testid="adm-revoke">Revoke</button></div>').join("")+(((data.keys||[]).length===0)?'<div class="text-faint">No keys.</div>':'')+'</div>'+
+    '</div>';
+  document.body.appendChild(back);
+  back.querySelector("#um-close").onclick = ()=> back.remove();
+  back.addEventListener("click",(e)=>{ if (e.target === back) back.remove(); });
+  back.querySelectorAll("[data-revoke]").forEach(b=> b.onclick = async ()=>{
+    try{ await api("/api/admin/users/"+data.id+"/keys/"+b.dataset.revoke, { method:"DELETE" }); toast("success","Revoked."); b.closest(".row").remove(); }
+    catch(err){ toast("error", err.message); }
+  });
+}
+
+function openUserEdit(data){
+  const s = data.settings || {};
+  const back = h("div",{ class:"cmd-back open", "data-testid":"user-edit-modal" });
+  back.innerHTML = '<div class="cmd" style="width:min(640px,92vw);padding:28px"><div class="flex justify-between items-center mb-4"><div><div class="caption">Edit settings</div><h3 class="h3">'+escapeHtml(data.id.slice(0,16))+'…</h3></div><button class="btn-icon" id="ue-close"><svg class="icon"><use href="#i-x"/></svg></button></div>'+
+    '<div class="form-grid">'+
+      '<div class="field"><label>Theme</label><select id="ue-theme"><option value="dark" '+(s.theme==='dark'?'selected':'')+'>dark</option><option value="light" '+(s.theme==='light'?'selected':'')+'>light</option><option value="system" '+(s.theme==='system'?'selected':'')+'>system</option></select></div>'+
+      '<div class="field"><label>Accent</label><input id="ue-accent" value="'+escapeHtml(s.accentColor||"#2e7dff")+'"/></div>'+
+      '<div class="field"><label>Rate limit</label><input id="ue-rate" type="number" value="'+(s.rateLimit||1000)+'"/></div>'+
+      '<div class="field"><label>API version</label><input id="ue-ver" value="'+escapeHtml(s.apiVersion||"v1")+'"/></div>'+
+    '</div>'+
+    '<div class="flex gap-3 mt-4"><button class="btn btn-primary" id="ue-save" data-testid="ue-save">Save</button><button class="btn btn-ghost" id="ue-cancel">Cancel</button></div></div>';
+  document.body.appendChild(back);
+  const close = ()=> back.remove();
+  back.querySelector("#ue-close").onclick = close;
+  back.querySelector("#ue-cancel").onclick = close;
+  back.addEventListener("click",(e)=>{ if (e.target === back) close(); });
+  back.querySelector("#ue-save").onclick = async ()=>{
+    const next = Object.assign({}, s, {
+      theme: back.querySelector("#ue-theme").value,
+      accentColor: back.querySelector("#ue-accent").value,
+      rateLimit: +back.querySelector("#ue-rate").value,
+      apiVersion: back.querySelector("#ue-ver").value
+    });
+    try{ await api("/api/admin/users/"+data.id+"/settings",{method:"PUT", body:next}); toast("success","Settings saved."); close(); }
+    catch(err){ toast("error", err.message); }
+  };
+}
+
+function renderAdmBroadcast(body){
+  body.innerHTML =
+    '<div class="card"><h3><svg class="icon"><use href="#i-bell"/></svg> Broadcast a notification</h3>'+
+      '<p class="text-dim body mt-2">Drops a notification into every user&rsquo;s drawer. Keep it short — 280 chars max.</p>'+
+      '<div class="form-grid mt-4"><div class="field"><label>Type</label><select id="bc-type" data-testid="bc-type"><option value="info">Info</option><option value="success">Success</option><option value="warning">Warning</option><option value="error">Error</option></select></div><div class="field"><label>Audience</label><select disabled><option>All users</option></select></div></div>'+
+      '<div class="field mt-4"><label>Message</label><textarea id="bc-msg" rows="3" maxlength="280" placeholder="Heads up — scheduled maintenance Sunday at 03:00 UTC." data-testid="bc-msg" style="padding:12px;border-radius:10px;background:var(--surface);border:1px solid var(--border);color:#fff;font-family:var(--font-body);font-size:13px"></textarea></div>'+
+      '<div class="flex justify-between items-center mt-4"><span class="text-faint text-xs"><span id="bc-count">0</span>/280</span><button class="btn btn-primary" id="bc-send" data-testid="bc-send">Send to all <svg class="icon" width="14" height="14"><use href="#i-arrow-right"/></svg></button></div>'+
+    '</div>';
+  setTimeout(()=>{
+    const ta = $("#bc-msg"); const c = $("#bc-count");
+    ta.addEventListener("input", ()=> c.textContent = ta.value.length);
+    $("#bc-send").onclick = async ()=>{
+      const message = ta.value.trim();
+      if (!message) return toast("warning","Enter a message.");
+      if (!confirm("Send this to every signed-up user?")) return;
+      try{ const r = await api("/api/admin/broadcast",{method:"POST", body:{ message, type: $("#bc-type").value }}); toast("success","Sent to "+r.count+" users."); ta.value=""; c.textContent=0; }
+      catch(err){ toast("error", err.message); }
+    };
+  }, 0);
+}
+
+async function renderAdmContent(body, key){
+  let cur;
+  try{ const r = await api("/api/admin/content/"+key); cur = r.data; } catch(e){ cur = null; }
+  body.innerHTML =
+    '<div class="card"><div class="flex justify-between items-center mb-4"><h3 style="margin:0;text-transform:capitalize">Edit '+key+' content</h3>'+
+    '<div class="flex gap-2"><button class="btn btn-ghost btn-sm" id="ac-fmt" data-testid="ac-fmt">Format</button><button class="btn btn-primary btn-sm" id="ac-save" data-testid="ac-save">Save</button></div></div>'+
+    '<p class="text-dim body mb-3">Anything you save here overrides the static defaults the SPA ships with. Schema is free-form JSON.</p>'+
+    '<textarea id="ac-json" data-testid="ac-json" spellcheck="false" rows="22" style="width:100%;padding:16px;border-radius:12px;background:var(--void-3);border:1px solid var(--border);color:#d6e4ff;font-family:var(--font-body);font-size:12.5px;line-height:1.6;resize:vertical">'+escapeHtml(JSON.stringify(cur||defaultContent(key),null,2))+'</textarea>'+
+    '</div>';
+  setTimeout(()=>{
+    $("#ac-fmt").onclick = ()=>{ try{ const v = JSON.parse($("#ac-json").value); $("#ac-json").value = JSON.stringify(v,null,2); toast("success","Formatted."); } catch(e){ toast("error","Invalid JSON: "+e.message); } };
+    $("#ac-save").onclick = async ()=>{
+      let parsed;
+      try{ parsed = JSON.parse($("#ac-json").value); } catch(e){ return toast("error","Invalid JSON: "+e.message); }
+      try{ await api("/api/admin/content/"+key,{method:"PUT", body:parsed}); toast("success","Saved."); }
+      catch(err){ toast("error", err.message); }
+    };
+  }, 0);
+}
+function defaultContent(key){
+  if (key === "changelog") return [{ ver:"v2.5.0", date:"2026-01-05", title:"Sample release", changes:[{text:"Edit me!", isFeat:true}] }];
+  if (key === "integrations") return { Popular:[{name:"Stripe",abbr:"SP",desc:"Edit this list",connected:true,cat:"payments"}] };
+  if (key === "status") return { services:[{name:"API Gateway", status:"operational", uptime:99.99, response:8}], incidents:[] };
+  return {};
+}
+
+
 /* ---------- Keyboard shortcuts modal ---------- */
 function openShortcuts(){
   const cur = $("#sc-modal");
@@ -2418,6 +2963,7 @@ function paintMobNav(){
 /* ---------- Boot ---------- */
 async function boot(){
   initCursor();
+  initShader();
   window.__particles = initParticles();
 
   // load Clerk
@@ -2434,15 +2980,20 @@ async function boot(){
       if (user){
         state.user = { id:user.id, email:user.primaryEmailAddress?user.primaryEmailAddress.emailAddress:"", firstName:user.firstName, lastName:user.lastName, image:user.imageUrl };
         loadNotifs();
+        api("/api/me").then(me=>{ state.isAdmin = !!me.isAdmin; state.settings = me.settings; }).catch(()=>{});
         if (state.route === "/" || !state.route) navigate("/dashboard");
         else render();
       } else {
-        state.user = null;
+        state.user = null; state.isAdmin = false;
         if (PROTECTED.includes(state.route)) navigate("/");
         else render();
       }
     });
     if (state.user) await loadNotifs();
+    if (state.user){
+      try{ const me = await api("/api/me"); state.isAdmin = !!me.isAdmin; state.settings = me.settings; }
+      catch(e){ /* not logged in / 401 */ }
+    }
   }
 
   // initial route
