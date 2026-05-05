@@ -86,7 +86,7 @@ async function importJwk(jwk) {
 
 async function verifyClerkJwt(token, env) {
   if (!token) return null;
-  const pk = env.CLERK_PUBLISHABLE_KEY || "";
+  const pk = env.CLERK_PUBLISHABLE_KEY || "pk_live_Y2xlcmsua3JpbGlzaGVyZS5vcmck";
   const issuer = clerkIssuer(pk);
   if (!issuer) return null;
   const [h, p, s] = token.split(".");
@@ -1646,7 +1646,11 @@ function initParticles(){
 /* ---------- Clerk auth (with fallback for invalid keys) ---------- */
 async function loadClerk(){
   const pk = window.__CLERK_PK__;
-  if (!pk) { console.warn("No Clerk key configured"); return null; }
+  // Skip Clerk loading if key is empty or missing
+  if (!pk || pk.trim() === "") { 
+    console.log("Clerk disabled (no key configured)"); 
+    return null; 
+  }
   return new Promise((resolve)=>{
     let frontend;
     try{ 
