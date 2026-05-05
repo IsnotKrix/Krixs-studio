@@ -4,7 +4,7 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-CLERK_PUBLISHABLE_KEY = "pk_live_a3JpbGlzaGVyZS5jbGVyay5hY2NvdW50cy5kZXY="
+CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsua3JpbGlzaGVyZS5vcmck"
 APP_URL = "https://krilishere.org/"
 ADMIN_USER_IDS = "user_3CKNf9PgtJyFMIITGIL4g6OdstU"
 
