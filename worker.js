@@ -1460,19 +1460,20 @@ function playBeep(freq, ms){
   o.stop(ctx.currentTime + (ms/1000));
 }
 
-/* ---------- Custom cursor + trail ---------- */
+/* ---------- Custom cursor + trail (throttled for perf) ---------- */
 function initCursor(){
   if (matchMedia("(hover:none),(pointer:coarse)").matches) return;
   const dot = $(".cursor-dot"); const ring = $(".cursor-ring"); const trail = $("#trail");
   let mx=window.innerWidth/2, my=window.innerHeight/2, rx=mx, ry=my;
   let lastTrail = 0;
+  let throttled = false;
   document.addEventListener("mousemove", (e)=>{ mx=e.clientX; my=e.clientY;
     document.documentElement.style.setProperty("--mx", mx+"px");
     document.documentElement.style.setProperty("--my", my+"px");
     dot.style.transform = "translate("+mx+"px,"+my+"px) translate(-50%,-50%)";
-    // trail (throttled)
+    // trail (heavily throttled for perf)
     const t = performance.now();
-    if (trail && t - lastTrail > 28){
+    if (trail && t - lastTrail > 40){
       lastTrail = t;
       const d = document.createElement("div"); d.className = "trail-dot";
       d.style.left = mx+"px"; d.style.top = my+"px";
@@ -1489,9 +1490,14 @@ function initCursor(){
   });
 }
 
-/* ---------- WebGL flow-field shader background ---------- */
+/* ---------- WebGL flow-field shader background (optional, high GPU cost) ---------- */
 function initShader(){
   const c = document.getElementById("shader-bg"); if (!c) return null;
+  // Skip shader on low-end devices or when performance.memory suggests constraints
+  const perfMem = performance.memory;
+  const isLowEnd = window.devicePixelRatio < 1.2 || (perfMem && perfMem.jsHeapSizeLimit < 200000000);
+  if (isLowEnd) { c.style.display = "none"; return null; }
+  
   const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
   if (!gl){ c.style.display = "none"; return null; }
   const VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
@@ -1560,8 +1566,11 @@ function initShader(){
   return { ok:true };
 }
 
-/* ---------- 3D parallax tilt (delegate) ---------- */
+/* ---------- 3D parallax tilt (delegate) - skip on mobile for perf ---------- */
 function bindTilt(scope){
+  // Skip tilt on mobile or low-end devices
+  if (matchMedia("(hover:none),(pointer:coarse)").matches || window.devicePixelRatio < 1.2) return;
+  
   scope = scope || document;
   const sel = ".feature-card, .stat-card, .qa, .int-card, .price-card, .step, .testi-card, .card.tiltable";
   scope.querySelectorAll(sel).forEach(el=>{
@@ -1592,7 +1601,10 @@ function initParticles(){
   const colors = ["rgba(79,168,255,", "rgba(46,125,255,", "rgba(168,204,255,"];
   let particles = [];
   function rebuild(){
-    const n = Math.round((state.settings && state.settings.particleDensity != null) ? state.settings.particleDensity : 80);
+    // Reduce particles on low-end devices for performance
+    const isLowEnd = window.devicePixelRatio < 1.5 || (navigator.deviceMemory && navigator.deviceMemory < 4);
+    const density = (state.settings && state.settings.particleDensity != null) ? state.settings.particleDensity : (isLowEnd ? 30 : 80);
+    const n = Math.round(density);
     particles = Array.from({length:n}, ()=>({
       x: Math.random()*innerWidth, y: Math.random()*innerHeight,
       vx:(Math.random()-.5)*0.4, vy:(Math.random()-.5)*0.4,
@@ -1631,24 +1643,32 @@ function initParticles(){
   return { rebuild };
 }
 
-/* ---------- Clerk auth ---------- */
+/* ---------- Clerk auth (with fallback for invalid keys) ---------- */
 async function loadClerk(){
   const pk = window.__CLERK_PK__;
-  if (!pk) { console.warn("No Clerk publishable key"); return null; }
+  if (!pk) { console.warn("No Clerk key configured"); return null; }
   return new Promise((resolve)=>{
     let frontend;
-    try{ frontend = atob(pk.split("_")[2].replace(/-/g,"+").replace(/_/g,"/")).replace(/\\$$/,""); }catch{ resolve(null); return; }
+    try{ 
+      frontend = atob(pk.split("_")[2].replace(/-/g,"+").replace(/_/g,"/")).replace(/\$$/,""); 
+      if (!frontend || !frontend.includes("clerk")) throw new Error("Invalid Clerk key format");
+    }catch(e){ 
+      console.warn("Invalid Clerk key:", e.message, "- proceeding without auth"); 
+      resolve(null); 
+      return; 
+    }
     const s = document.createElement("script");
     s.src = "https://" + frontend + "/npm/@clerk/clerk-js@5/dist/clerk.browser.js";
     s.async = true; s.crossOrigin = "anonymous"; s.setAttribute("data-clerk-publishable-key", pk);
     s.onload = async ()=>{
       try{
         const Clerk = window.Clerk;
+        if (!Clerk) throw new Error("Clerk not loaded");
         await Clerk.load({ appearance:{ baseTheme: undefined, variables:{ colorPrimary:"#00f5ff", colorBackground:"#07070f", colorText:"#fff", colorInputBackground:"#0d0d1a", colorInputText:"#fff", borderRadius:"14px", fontFamily:"DM Sans, system-ui, sans-serif" }, elements:{ card:{ background:"#07070f", border:"1px solid rgba(255,255,255,0.1)" } } } });
         resolve(Clerk);
-      } catch(e){ console.error(e); resolve(null); }
+      } catch(e){ console.warn("Clerk failed:", e.message); resolve(null); }
     };
-    s.onerror = ()=> resolve(null);
+    s.onerror = ()=>{ console.warn("Clerk script failed to load"); resolve(null); };
     document.head.appendChild(s);
   });
 }
@@ -1938,10 +1958,20 @@ async function renderLanding(){
     // FAQ accordion
     $$(".faq-item").forEach(it=> { const q = it.querySelector(".faq-q"); if (q) q.onclick = ()=> it.classList.toggle("open"); });
 
-    // CTAs -> Clerk modal
-    const open = ()=> { if (state.clerk) state.clerk.openSignUp({ afterSignUpUrl:"#/dashboard", afterSignInUrl:"#/dashboard" }); else navigate("/dashboard"); };
+    // CTAs -> Clerk modal (fallback to dashboard if Clerk unavailable)
+    const open = ()=> { 
+      if (state.clerk && state.clerk.openSignUp) {
+        try { state.clerk.openSignUp({ afterSignUpUrl:"#/dashboard", afterSignInUrl:"#/dashboard" }); } 
+        catch(e) { navigate("/dashboard"); }
+      } else { navigate("/dashboard"); }
+    };
     const navSignin = document.getElementById("nav-signin");
-    if (navSignin) navSignin.onclick = ()=> { if (state.clerk) state.clerk.openSignIn({ afterSignInUrl:"#/dashboard" }); else navigate("/dashboard"); };
+    if (navSignin) navSignin.onclick = ()=> { 
+      if (state.clerk && state.clerk.openSignIn) {
+        try { state.clerk.openSignIn({ afterSignInUrl:"#/dashboard" }); } 
+        catch(e) { navigate("/dashboard"); }
+      } else { navigate("/dashboard"); }
+    };
     const navSignup = document.getElementById("nav-signup");
     if (navSignup) navSignup.onclick = open;
     const heroCta = document.getElementById("hero-cta-primary");
