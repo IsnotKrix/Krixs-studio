@@ -86,7 +86,7 @@ async function importJwk(jwk) {
 
 async function verifyClerkJwt(token, env) {
   if (!token) return null;
-  const pk = env.CLERK_PUBLISHABLE_KEY || "pk_live_Y2xlcmsua3JpbGlzaGVyZS5vcmck";
+  const pk = env.CLERK_PUBLISHABLE_KEY || "";
   const issuer = clerkIssuer(pk);
   if (!issuer) return null;
   const [h, p, s] = token.split(".");
