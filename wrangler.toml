@@ -4,13 +4,13 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-CLERK_PUBLISHABLE_KEY = "pk_test_REPLACE_WITH_YOUR_CLERK_PUBLISHABLE_KEY"
-APP_URL = "https://void-interface.workers.dev"
-ADMIN_USER_IDS = "user_REPLACE_WITH_YOUR_CLERK_USER_ID"
+CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsua3JpbGlzaGVyZS5vcmckpk_live_Y2xlcmsua3JpbGlzaGVyZS5vcmck"
+APP_URL = "https://krilishere.org/"
+ADMIN_USER_IDS = "user_3CKNf9PgtJyFMIITGIL4g6OdstU"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "REPLACE_WITH_KV_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+id = "31b3a39317d749da925d5f5f70663cc5"
+preview_id = "31b3a39317d749da925d5f5f70663cc5"
 
 # Add secret with: wrangler secret put CLERK_SECRET_KEY
