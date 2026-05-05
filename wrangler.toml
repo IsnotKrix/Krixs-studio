@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 CLERK_PUBLISHABLE_KEY = ""
-APP_URL = "https://krilishere.org/"
+APP_URL = "https://clerk.krilishere.org"
 ADMIN_USER_IDS = "user_3CKNf9PgtJyFMIITGIL4g6OdstU"
 
 [[kv_namespaces]]
