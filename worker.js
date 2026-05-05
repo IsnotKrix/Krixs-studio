@@ -3241,3 +3241,11 @@ async function boot(){
 document.addEventListener("DOMContentLoaded", boot);
 
 `;
+const html = (s) =>
+  new Response(s, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=300", 
+    },
+  });
