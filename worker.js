@@ -3153,12 +3153,16 @@ function paintMobNav(){
 
 /* ---------- Boot ---------- */
 async function boot(){
+  console.log("🚀 BOOT START");
   initCursor();
   initShader();
   window.__particles = initParticles();
 
   // load Clerk
+  console.log("📦 Loading Clerk...");
   state.clerk = await loadClerk();
+  console.log("✅ Clerk loaded:", state.clerk ? "YES" : "NO (disabled/failed)");
+  
   if (state.clerk){
     state.user = state.clerk.user ? {
       id: state.clerk.user.id,
@@ -3190,7 +3194,9 @@ async function boot(){
   // initial route
   state.route = location.hash.slice(1) || (state.user ? "/dashboard" : "/");
 
+  console.log("📄 Rendering initial route:", state.route);
   await render();
+  console.log("✅ Render complete");
   paintMobNav();
 
   // hide loader
@@ -3228,6 +3234,8 @@ async function boot(){
 
   // mob nav repaint
   addEventListener("hashchange", paintMobNav);
+  
+  console.log("✅ BOOT COMPLETE");
 }
 
 document.addEventListener("DOMContentLoaded", boot);
